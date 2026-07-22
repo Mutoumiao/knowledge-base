@@ -50,11 +50,17 @@ export class CompanionChatController {
     private readonly sseHelper: SseResponseHelper,
   ) {}
 
-  /** 创建或复用用户与伴侣的唯一会话 */
+  /**
+   * 创建或复用用户与伴侣的唯一会话。
+   * `fresh: true`：清空消息/摘要（保留长期记忆），实现「重新开始聊天」与 D3b 跨会话回忆。
+   */
   @Post('conversations')
   async createConversation(@CurrentUser('id') userId: string, @Body() dto: CreateConversationDto) {
     await this.companionRepo.findByIdAndAuthorize(dto.companionId, userId)
-    const conversation = await this.conversationRepo.getOrCreate(undefined, userId, dto.companionId)
+    let conversation = await this.conversationRepo.getOrCreate(undefined, userId, dto.companionId)
+    if (dto.fresh) {
+      conversation = await this.conversationRepo.resetChatHistory(conversation.id)
+    }
     if (dto.title) {
       return this.toConversationDto(
         await this.conversationRepo.update(conversation.id, {
@@ -62,6 +68,14 @@ export class CompanionChatController {
         }),
       )
     }
+    return this.toConversationDto(conversation)
+  }
+
+  /** 显式重置当前会话聊天记录（保留长期记忆） */
+  @Post('conversations/:id/reset')
+  async resetConversation(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    await this.conversationRepo.findByIdAndAuthorize(id, userId)
+    const conversation = await this.conversationRepo.resetChatHistory(id)
     return this.toConversationDto(conversation)
   }
 

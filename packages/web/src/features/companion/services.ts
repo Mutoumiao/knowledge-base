@@ -74,6 +74,11 @@ export function getConversation(id: string) {
   return alovaInstance.Get<Conversation>(`/companion/conversations/${id}`)
 }
 
+/** 清空会话消息与摘要，保留长期记忆 */
+export function resetConversation(id: string) {
+  return alovaInstance.Post<Conversation>(`/companion/conversations/${id}/reset`, {})
+}
+
 // ---- 聊天 / 消息 / 反馈 / 记忆 ----
 
 export function listMessages(conversationId: string, params?: { page?: number; size?: number }) {

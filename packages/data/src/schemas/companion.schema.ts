@@ -52,6 +52,11 @@ export const WEB_COMPANION_OMIT_FIELDS = [
 export const createConversationSchema = z.object({
   companionId: z.string().min(1),
   title: z.string().max(200).optional(),
+  /**
+   * 在 user×companion 唯一会话约束下，true 表示「开启新聊天」：
+   * 复用会话行，清空消息/摘要/计数，保留长期记忆（跨会话记忆依赖此语义）。
+   */
+  fresh: z.boolean().optional(),
 })
 
 export const conversationListQuerySchema = z.object({

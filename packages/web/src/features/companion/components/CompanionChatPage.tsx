@@ -21,6 +21,7 @@ import {
   getCompanion,
   listConversations,
   listMessages,
+  resetConversation,
   submitFeedback,
 } from '../services'
 import { useCompanionStore } from '../store'
@@ -255,6 +256,40 @@ export function CompanionChatPage({
     void openCompanionMemoriesDialog({ companionId })
   }
 
+  const handleFreshChat = useCallback(async () => {
+    if (isStreaming) {
+      toast.message('请等待当前回复结束后再开启新聊天')
+      return
+    }
+    try {
+      const conv = conversationRef.current
+      if (conv?.id) {
+        await resetConversation(conv.id).send()
+      } else {
+        const created = await createConversation({ companionId, fresh: true }).send()
+        conversationRef.current = created
+      }
+      setFeedbackMap({})
+      const openingText = companionRef.current?.openingMessage?.trim()
+      if (
+        openingText &&
+        shouldShowOpeningMessage({ messageCount: 0, openingMessage: openingText })
+      ) {
+        const opening = buildOpeningUiMessage({
+          conversationId: conversationRef.current?.id ?? null,
+          companionId,
+          openingMessage: openingText,
+        })
+        setMessages([toUiMessage(opening)])
+      } else {
+        setMessages([])
+      }
+      toast.success('已开启新聊天（长期记忆仍会保留）')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '开启新聊天失败')
+    }
+  }, [companionId, isStreaming, setMessages])
+
   function handleOpenCare() {
     void openCompanionCareDialog({
       companionId,
@@ -357,6 +392,7 @@ export function CompanionChatPage({
         onBack={handleBack}
         onOpenMemories={handleOpenMemories}
         onOpenCare={handleOpenCare}
+        onFreshChat={() => void handleFreshChat()}
         onEdit={companion.source === 'system' ? undefined : handleEdit}
         embedded={embedded}
       />

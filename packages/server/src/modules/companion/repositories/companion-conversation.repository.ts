@@ -46,6 +46,23 @@ export class CompanionConversationRepository {
     })
   }
 
+  /**
+   * 「新会话」语义（唯一会话模型下）：清空消息与反馈、摘要与计数。
+   * 长期记忆按 user×companion 保留，供跨会话回忆。
+   */
+  async resetChatHistory(conversationId: string): Promise<CompanionConversation> {
+    await this.prisma.companionMessageFeedback.deleteMany({ where: { conversationId } })
+    await this.prisma.companionMessage.deleteMany({ where: { conversationId } })
+    return this.prisma.companionConversation.update({
+      where: { id: conversationId },
+      data: {
+        summary: null,
+        messageCount: 0,
+        lastMessageAtMs: null,
+      },
+    })
+  }
+
   async findByUserId(
     userId: string,
     options?: { page?: number; size?: number; companionId?: string },

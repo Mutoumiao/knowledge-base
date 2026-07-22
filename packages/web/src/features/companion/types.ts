@@ -60,6 +60,9 @@ export interface UpdateCompanionStatusPayload {
 
 export interface CreateConversationPayload {
   companionId: string
+  title?: string
+  /** 清空聊天历史、保留长期记忆（唯一会话模型下的「新会话」） */
+  fresh?: boolean
 }
 
 export interface Conversation {

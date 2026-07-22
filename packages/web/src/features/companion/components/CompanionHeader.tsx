@@ -1,4 +1,4 @@
-import { ArrowLeft, Brain, Heart, Pencil } from 'lucide-react'
+import { ArrowLeft, Brain, Heart, MessageSquarePlus, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { Companion } from '../types'
 import { CompanionStatusTag } from './CompanionStatusTag'
@@ -9,6 +9,8 @@ interface CompanionHeaderProps {
   onOpenMemories: () => void
   onOpenCare?: () => void
   onEdit?: () => void
+  /** 清空本会话聊天记录，保留长期记忆 */
+  onFreshChat?: () => void
   /** 嵌入工作台时：窄屏返回清选中；宽屏可隐藏返回 */
   embedded?: boolean
 }
@@ -19,6 +21,7 @@ export function CompanionHeader({
   onOpenMemories,
   onOpenCare,
   onEdit,
+  onFreshChat,
   embedded = false,
 }: CompanionHeaderProps) {
   return (
@@ -62,6 +65,12 @@ export function CompanionHeader({
         <Button variant="ghost" size="sm" onClick={onEdit}>
           <Pencil className="h-4 w-4 mr-1" />
           编辑
+        </Button>
+      )}
+      {onFreshChat && (
+        <Button variant="outline" size="sm" onClick={onFreshChat} title="清空聊天记录，保留长期记忆">
+          <MessageSquarePlus className="h-4 w-4 mr-1" />
+          新聊天
         </Button>
       )}
       {onOpenCare && (
