@@ -86,6 +86,29 @@ const envSchema = z.object({
     .preprocess((val) => val === 'true' || val === '1' || val === true, z.boolean())
     .default(false),
 
+  // === 观测 / Langfuse（可选；未配置不阻断启动；业务侧仍可读 process.env）===
+  LANGFUSE_PUBLIC_KEY: optionalNonEmptyString,
+  LANGFUSE_SECRET_KEY: optionalNonEmptyString,
+  LANGFUSE_HOST: optionalNonEmptyString,
+  LANGFUSE_EXPORT_TIMEOUT_MS: z.coerce.number().int().positive().optional(),
+  TRACE_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
+  TRACE_FORCE_CHAT_E2E_MS: z.coerce.number().int().positive().optional(),
+  TRACE_FORCE_CHAT_KA_MS: z.coerce.number().int().positive().optional(),
+  TRACE_FORCE_COMPANION_E2E_MS: z.coerce.number().int().positive().optional(),
+  TRACE_FORCE_COMPANION_GENERATE_MS: z.coerce.number().int().positive().optional(),
+  OBS_TURN_RETENTION_DAYS: z.coerce.number().int().positive().optional(),
+  OBS_SLOW_TOP_N: z.coerce.number().int().positive().optional(),
+  OBS_SSE_EXPOSE_TRACE_ID: z
+    .preprocess((val) => val === 'true' || val === '1' || val === true, z.boolean())
+    .optional(),
+  OBS_IMPLICIT_REJECT_ENABLED: z
+    .preprocess((val) => {
+      if (val === undefined || val === '') return undefined
+      return val === 'true' || val === '1' || val === true
+    }, z.boolean().optional())
+    .optional(),
+  OBS_CLEANUP_INTERVAL_MS: z.coerce.number().int().positive().optional(),
+
   // === 初始超级管理员 ===
   SUPER_ADMIN_EMAIL: z.string().email('SUPER_ADMIN_EMAIL 必须是合法邮箱').optional(),
   SUPER_ADMIN_PASSWORD: z

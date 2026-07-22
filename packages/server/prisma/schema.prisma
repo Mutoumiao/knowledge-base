@@ -650,3 +650,31 @@ model RolePermission {
   @@index([roleCode, app])
   @@map("role_permissions")
 }
+
+/// 观测回合摘要（W2）：每用户回合至多一行；Admin 时延/旗标读模型
+model ObservabilityTurn {
+  id              String   @id @default(uuid())
+  traceId         String   @unique @map("trace_id")
+  route           String // chat | companion
+  userId          String?  @map("user_id")
+  sessionId       String?  @map("session_id")
+  conversationId  String?  @map("conversation_id")
+  messageId       String?  @map("message_id")
+  status          String // ok | error | cancelled
+  latencyMs       Int      @map("latency_ms")
+  postProcessMs   Int?     @map("post_process_ms")
+  /// turn 级旗标：retrievalEmpty / degraded / explicitFeedback / userRejected / contractSuccess 等
+  flags           Json?
+  /// 分阶段耗时 ms：knowledge.ai / generate / node names 等
+  spanMs          Json?    @map("span_ms")
+  /// 过程 outcome 元数据 only（P1 无正文）
+  spanAttrs       Json?    @map("span_attrs")
+  inputTokens     Int?     @map("input_tokens")
+  outputTokens    Int?     @map("output_tokens")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([route, createdAt])
+  @@index([createdAt])
+  @@map("observability_turns")
+}

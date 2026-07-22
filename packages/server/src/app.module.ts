@@ -19,6 +19,7 @@ import { ChatModule } from './modules/chat/chat.module.js'
 import { CompanionModule } from './modules/companion/companion.module.js'
 import { HealthModule } from './modules/health/health.module.js'
 import { KnowledgeBaseModule } from './modules/knowledge-base/knowledge-base.module.js'
+import { ObservabilityModule } from './modules/observability/observability.module.js'
 import { SessionModule } from './modules/session/session.module.js'
 import { SettingsModule } from './modules/settings/settings.module.js'
 import { UserModule } from './modules/user/user.module.js'
@@ -63,6 +64,7 @@ const ROOT_ENV_PATH = resolve(__dirname, '../../../.env')
       skipIf: () => process.env.NODE_ENV !== 'production',
     }),
     CommonModule,
+    ObservabilityModule,
     HealthModule,
     CacheModule,
     UserModule,

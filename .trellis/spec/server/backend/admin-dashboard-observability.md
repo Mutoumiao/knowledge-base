@@ -37,8 +37,9 @@
 ## Module Dependencies
 
 - `HealthService`、`KnowledgeAiClient.health()`
-- Prisma：`Message` / `Document` / `CompanionMessage` / `CompanionMessageFeedback` / `CompanionObsEvent`
-- Zod：`@goferbot/data` dashboard schemas
+- Prisma：`Message` / `Document` / `CompanionMessage` / `CompanionMessageFeedback` / `CompanionObsEvent` / **`ObservabilityTurn`（W2 真源）**
+- `ObservabilityTurnService`（`@Global` `ObservabilityModule`）：Hub/详页 empty·degraded·e2e·慢列表优先读 W2；**无 W2 样本时不得混扫消息 metadata 冒充 empty/degraded turn 率**
+- Zod：`@goferbot/data` dashboard + observability schemas
 - 权限：`dashboard:read`、`system:metrics`
 
 ## Development Entry

@@ -67,6 +67,17 @@ export {
   sectionStatusSchema,
 } from './dashboard.schema.js'
 export {
+  chatExplicitFeedbackSchema,
+  chatMessageFeedbackRequestSchema,
+  chatMessageFeedbackResponseSchema,
+  observabilityRouteSchema,
+  observabilitySlowTurnItemSchema,
+  observabilityTurnFlagsSchema,
+  observabilityTurnMinimalWriteSchema,
+  observabilityTurnStatusSchema,
+  observabilityTurnWriteSchema,
+} from './observability.schema.js'
+export {
   createPagedResponseSchema,
   pagerRequestSchema,
   paginationSchema,

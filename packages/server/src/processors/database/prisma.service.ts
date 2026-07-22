@@ -173,6 +173,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.client.companionObsEvent
   }
 
+  get observabilityTurn() {
+    return this.client.observabilityTurn
+  }
+
   get groupChat() {
     return this.client.groupChat
   }

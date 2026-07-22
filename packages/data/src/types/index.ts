@@ -81,6 +81,17 @@ import {
   sectionStatusSchema,
 } from '../schemas/dashboard.schema.js'
 import {
+  chatExplicitFeedbackSchema,
+  chatMessageFeedbackRequestSchema,
+  chatMessageFeedbackResponseSchema,
+  observabilityRouteSchema,
+  observabilitySlowTurnItemSchema,
+  observabilityTurnFlagsSchema,
+  observabilityTurnMinimalWriteSchema,
+  observabilityTurnStatusSchema,
+  observabilityTurnWriteSchema,
+} from '../schemas/observability.schema.js'
+import {
   appearanceConfigSchema,
   availableProvidersResponseSchema,
   type CategorySettingsMap,
@@ -137,6 +148,15 @@ export type ObservabilityMetric = z.infer<typeof observabilityMetricSchema>
 export type ObservabilitySection = z.infer<typeof observabilitySectionSchema>
 export type ObservabilityDetail = z.infer<typeof observabilityDetailSchema>
 export type ObservabilityDetailQuery = z.infer<typeof observabilityDetailQuerySchema>
+export type ObservabilityRoute = z.infer<typeof observabilityRouteSchema>
+export type ObservabilityTurnStatus = z.infer<typeof observabilityTurnStatusSchema>
+export type ObservabilityTurnFlags = z.infer<typeof observabilityTurnFlagsSchema>
+export type ObservabilityTurnWrite = z.infer<typeof observabilityTurnWriteSchema>
+export type ObservabilityTurnMinimalWrite = z.infer<typeof observabilityTurnMinimalWriteSchema>
+export type ObservabilitySlowTurnItem = z.infer<typeof observabilitySlowTurnItemSchema>
+export type ChatExplicitFeedback = z.infer<typeof chatExplicitFeedbackSchema>
+export type ChatMessageFeedbackRequest = z.infer<typeof chatMessageFeedbackRequestSchema>
+export type ChatMessageFeedbackResponse = z.infer<typeof chatMessageFeedbackResponseSchema>
 export type Session = z.infer<typeof sessionSchema>
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>
 export type UpdateSessionRequest = z.infer<typeof updateSessionRequestSchema>
@@ -266,3 +286,26 @@ export {
   updateUserStatusRequestSchema,
   userSchema,
 }
+
+export {
+  chatExplicitFeedbackSchema,
+  chatMessageFeedbackRequestSchema,
+  chatMessageFeedbackResponseSchema,
+  observabilityRouteSchema,
+  observabilitySlowTurnItemSchema,
+  observabilityTurnFlagsSchema,
+  observabilityTurnMinimalWriteSchema,
+  observabilityTurnStatusSchema,
+  observabilityTurnWriteSchema,
+} from '../schemas/observability.schema.js'
+
+export {
+  dashboardSummaryQuerySchema,
+  dashboardSummarySchema,
+  hubCompanionSchema,
+  hubRagSchema,
+  kpiSchema,
+  observabilityDetailQuerySchema,
+  observabilityDetailSchema,
+  observabilityWindowSchema,
+} from '../schemas/dashboard.schema.js'
