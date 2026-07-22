@@ -163,7 +163,7 @@ describe('ChatController', () => {
 
       expect(conversationService.ensureOwnership).toHaveBeenCalledWith('user-1', 's1')
       expect(conversationService.paginateMessages).toHaveBeenCalledWith('s1', { page: 1, size: 20 })
-      expect(result).toEqual({ items: undefined, pagination: { total: 0 } })
+      expect(result).toEqual({ items: [], pagination: { total: 0 } })
     })
   })
 

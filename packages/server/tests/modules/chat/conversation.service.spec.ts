@@ -127,6 +127,8 @@ describe('ConversationService', () => {
         sessionId: 's1',
         role: 'assistant',
         content: 'hello',
+        status: 'completed',
+        metadata: undefined,
       })
       expect(result.role).toBe('assistant')
     })
@@ -175,7 +177,7 @@ describe('ConversationService', () => {
 
       expect(result).toHaveLength(1)
       expect(messageRepository.findUpToMessageId).toHaveBeenCalledWith('s1', 'm2', {
-        select: { role: true, content: true },
+        select: { role: true, content: true, status: true },
       })
     })
 

@@ -81,8 +81,10 @@ describe('FolderService', () => {
 
       const result = await folderService.remove('u1', 'kb1', 'f1')
 
+      // treeService 仅校验归属；级联删除由 cleanupFolder 完成
+      expect(mockTreeService.remove).toHaveBeenCalledWith('u1', 'kb1', 'f1')
       expect(mockCleanup.cleanupFolder).toHaveBeenCalledWith('kb1', 'f1')
-      expect(mockMoveService.deleteFolder).toHaveBeenCalledWith('f1')
+      expect(mockMoveService.deleteFolder).not.toHaveBeenCalled()
       expect(result.deleted).toBe(true)
     })
   })

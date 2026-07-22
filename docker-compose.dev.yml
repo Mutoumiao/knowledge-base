@@ -1,9 +1,9 @@
 name: goferbot-infra
 
-# 使用根目录 .env 文件加载 Docker-Infra 变量
+# 变量插值：Compose 自动读取项目根目录 `.env`（${POSTGRES_PORT} 等）
+# 容器内环境：各 service 的 environment 块显式注入
 # 变量分类详见 docs/guide/backend/configuration-guide.md
-env_file:
-  - .env
+# 注意：根级 env_file 不是 Compose 合法字段，会导致 `docker compose up` 校验失败
 
 services:
   postgres:

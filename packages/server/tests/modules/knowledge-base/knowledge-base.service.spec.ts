@@ -181,7 +181,8 @@ describe('KnowledgeBaseService', () => {
 
       const result = await kbService.remove('u1', 'kb1')
 
-      expect(mockKbRepository.delete).toHaveBeenCalledWith('kb1')
+      // 物理删除由 KbCleanupService（监听 knowledge_base.deleted）完成，service 只发事件
+      expect(mockKbRepository.delete).not.toHaveBeenCalled()
       expect(mockEventEmitter.emitAsync).toHaveBeenCalledWith(
         'knowledge_base.deleted',
         expect.anything(),
