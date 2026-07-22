@@ -37,19 +37,26 @@ describe('FileGridItem', () => {
     expect(screen.getByRole('button', { name: /打开文件夹/ })).toBeDefined()
   })
 
-  // TODO(RAG): 文档处理状态徽章在 RAG 链路冻结期间已隐藏（见 FileGridItem.tsx），
-  // 待 RAG 上线恢复徽章后，重新启用以下状态文案断言。
-  // it.each([
-  //   { status: 'uploaded' as const, label: '已上传' },
-  //   { status: 'chunking' as const, label: '分块中' },
-  //   { status: 'embedding' as const, label: '嵌入中' },
-  //   { status: 'indexing' as const, label: '索引中' },
-  //   { status: 'ready' as const, label: '就绪' },
-  //   { status: 'failed' as const, label: '失败' },
-  // ])('renders status label $status for documents', ({ status, label }) => {
-  //   render(<FileGridItem item={makeDocument(status)} isFolder={false} onClick={vi.fn()} />)
-  //   expect(screen.getByText(label)).toBeDefined()
-  // })
+  it.each([
+    { status: 'uploaded' as const, label: '排队中' },
+    { status: 'chunking' as const, label: '索引中' },
+    { status: 'embedding' as const, label: '索引中' },
+    { status: 'indexing' as const, label: '索引中' },
+    { status: 'ready' as const, label: '就绪' },
+    { status: 'failed' as const, label: '失败' },
+  ])('renders status label $status for documents', ({ status, label }) => {
+    render(<FileGridItem item={makeDocument(status)} isFolder={false} onClick={vi.fn()} />)
+    expect(screen.getByText(label)).toBeDefined()
+    expect(screen.getByRole('button', { name: new RegExp(label) })).toBeDefined()
+  })
+
+  it('exposes errorMessage via card title when failed', () => {
+    const item = { ...makeDocument('failed'), errorMessage: 'Parsed document text is empty' }
+    render(<FileGridItem item={item} isFolder={false} onClick={vi.fn()} />)
+    expect(screen.getByRole('button', { name: /失败/ }).getAttribute('title')).toBe(
+      'Parsed document text is empty',
+    )
+  })
 
   it('renders document name and file size', () => {
     render(<FileGridItem item={makeDocument('ready')} isFolder={false} onClick={vi.fn()} />)

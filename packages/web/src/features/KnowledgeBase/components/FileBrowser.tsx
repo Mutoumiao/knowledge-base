@@ -6,6 +6,7 @@ import { openDialog } from '@/overlays/services/overlay-service'
 import { openUploadManager } from '../open-upload-manager'
 import {
   addFolder,
+  cancelIndexStatusPoll,
   loadKbItems,
   previewDocument,
   removeItem,
@@ -224,14 +225,22 @@ export function FileBrowser({ kbName }: FileBrowserProps) {
 
     const trimmed = searchQuery.trim()
     if (!trimmed) {
-      loadKbItems(currentKbId, currentFolderId, sortParams)
-      return
+      // 进入目录时若有排队/索引中文档，静默轮询直到终态（覆盖刷新页面后仍在索引）
+      void loadKbItems(currentKbId, currentFolderId, sortParams, { pollIndexStatus: true })
+      return () => {
+        cancelIndexStatusPoll()
+      }
     }
 
+    // 搜索态不需要索引轮询
+    cancelIndexStatusPoll()
     const timer = setTimeout(() => {
       searchKbItems(trimmed)
     }, 300)
-    return () => clearTimeout(timer)
+    return () => {
+      clearTimeout(timer)
+      cancelIndexStatusPoll()
+    }
   }, [currentKbId, currentFolderId, searchQuery, sortParams])
 
   function handleFolderClick(folder: Folder) {

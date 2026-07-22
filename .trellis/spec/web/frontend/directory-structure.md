@@ -45,8 +45,9 @@ packages/web/src/
 │   │   ├── store.ts
 │   │   └── types.ts
 │   ├── KnowledgeBase/        # 知识库模块
-│   │   ├── components/
-│   │   ├── services.ts
+│   │   ├── components/       # FileBrowser / FileGridItem / FileListItem 等
+│   │   ├── document-status.ts # 索引状态文案映射 + pending 判定（唯一映射源）
+│   │   ├── services.ts       # loadKbItems silent/poll、上传编排
 │   │   ├── store.ts
 │   │   └── types.ts
 │   ├── companion/            # AI 伴侣模块

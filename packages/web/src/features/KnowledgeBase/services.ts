@@ -21,6 +21,7 @@ import {
   updateKb as apiUpdateKb,
   uploadFile as apiUploadFile,
 } from '@/api/KnowledgeBase'
+import { hasPendingIndexDocuments } from './document-status'
 import { useKbStore } from './store'
 import type { DocumentItem, Folder, ItemSortParams } from './types'
 import { partitionUploadFiles } from './upload-validation'
@@ -115,16 +116,22 @@ function normalizeDocumentList(payload: unknown): DocumentItem[] {
 }
 
 function normalizeDocumentItem(raw: unknown): DocumentItem {
-  const doc = raw as DocumentItem & { size?: number | string | null }
+  const doc = raw as DocumentItem & {
+    size?: number | string | null
+    errorMessage?: string | null
+    error?: string | null
+  }
   const size =
     doc.size === null || doc.size === undefined
       ? null
       : typeof doc.size === 'string'
         ? Number(doc.size)
         : doc.size
+  const errorMessage = doc.errorMessage ?? doc.error ?? null
   return {
     ...doc,
     size: Number.isFinite(size as number) ? (size as number) : null,
+    errorMessage,
   }
 }
 
@@ -197,10 +204,33 @@ export function removeKnowledgeBaseAndClearSelection(kbId: string) {
 
 let currentLoadId = 0
 
+/** 索引状态轮询：单目录只保留最新一轮，避免多路上传叠加 timer */
+let indexPollGeneration = 0
+let indexPollTimer: ReturnType<typeof setTimeout> | null = null
+const INDEX_POLL_INTERVAL_MS = 2000
+const INDEX_POLL_MAX_MS = 90_000
+
+export type LoadKbItemsOptions = {
+  /** 无感刷新：不置 fileLoading，避免轮询时列表骨架闪烁 */
+  silent?: boolean
+  /** 加载后若存在排队/索引中文档，启动静默轮询直到终态或超时 */
+  pollIndexStatus?: boolean
+}
+
+/** 取消索引状态轮询（切目录 / 卸载 FileBrowser / 新一轮 schedule 前调用） */
+export function cancelIndexStatusPoll() {
+  indexPollGeneration += 1
+  if (indexPollTimer != null) {
+    clearTimeout(indexPollTimer)
+    indexPollTimer = null
+  }
+}
+
 export async function loadKbItems(
   kbId: string,
   folderId: string | null = null,
   sort?: ItemSortParams,
+  options?: LoadKbItemsOptions,
 ) {
   const {
     setFolders,
@@ -212,12 +242,15 @@ export async function loadKbItems(
     setBreadcrumbs,
   } = useKbStore.getState()
 
+  const silent = options?.silent === true
   const thisLoadId = ++currentLoadId
 
   setCurrentKbId(kbId)
   setCurrentFolderId(folderId)
-  setFileLoading(true)
-  setFileError(null)
+  if (!silent) {
+    setFileLoading(true)
+    setFileError(null)
+  }
 
   const folderSort = sort
     ? { sortBy: sort.sortBy === 'type' ? 'name' : sort.sortBy, sortOrder: sort.sortOrder }
@@ -233,16 +266,83 @@ export async function loadKbItems(
     if (thisLoadId !== currentLoadId) return
     setFolders((folders as Folder[]) ?? [])
     // 文档列表接口为分页：{ items, total, page, pageSize }；兼容旧数组响应
-    setDocuments(normalizeDocumentList(documentsRes))
+    const documents = normalizeDocumentList(documentsRes)
+    setDocuments(documents)
     setBreadcrumbs((breadcrumbs as Folder[]) ?? [])
+
+    if (options?.pollIndexStatus && hasPendingIndexDocuments(documents)) {
+      scheduleIndexStatusPoll(kbId, folderId, sort)
+    }
   } catch (e) {
     if (thisLoadId !== currentLoadId) return
-    setFileError(mapErrorMessage(e))
+    if (!silent) {
+      setFileError(mapErrorMessage(e))
+    }
   } finally {
-    if (thisLoadId === currentLoadId) {
+    if (!silent && thisLoadId === currentLoadId) {
       setFileLoading(false)
     }
   }
+}
+
+/**
+ * 轮询当前目录文档索引状态（uploaded/indexing → ready|failed）。
+ * 切库/切目录时 currentLoadId 递增会丢弃过期结果；generation + clearTimeout 取消旧 timer。
+ */
+function scheduleIndexStatusPoll(kbId: string, folderId: string | null, sort?: ItemSortParams) {
+  // 先清旧 timer 再开新 generation，避免 setTimeout 无清除
+  if (indexPollTimer != null) {
+    clearTimeout(indexPollTimer)
+    indexPollTimer = null
+  }
+  const generation = ++indexPollGeneration
+  const startedAt = Date.now()
+
+  const arm = (delayMs: number) => {
+    if (generation !== indexPollGeneration) return
+    indexPollTimer = setTimeout(() => {
+      indexPollTimer = null
+      void tick()
+    }, delayMs)
+  }
+
+  const tick = async () => {
+    if (generation !== indexPollGeneration) return
+
+    const state = useKbStore.getState()
+    if (state.currentKbId !== kbId || state.currentFolderId !== folderId) {
+      cancelIndexStatusPoll()
+      return
+    }
+    if (Date.now() - startedAt >= INDEX_POLL_MAX_MS) {
+      cancelIndexStatusPoll()
+      return
+    }
+
+    await loadKbItems(kbId, folderId, sort ?? state.fileListSort ?? undefined, {
+      silent: true,
+    })
+
+    if (generation !== indexPollGeneration) return
+
+    const after = useKbStore.getState()
+    if (after.currentKbId !== kbId || after.currentFolderId !== folderId) {
+      cancelIndexStatusPoll()
+      return
+    }
+    if (!hasPendingIndexDocuments(after.documents)) {
+      cancelIndexStatusPoll()
+      return
+    }
+    if (Date.now() - startedAt >= INDEX_POLL_MAX_MS) {
+      cancelIndexStatusPoll()
+      return
+    }
+
+    arm(INDEX_POLL_INTERVAL_MS)
+  }
+
+  arm(INDEX_POLL_INTERVAL_MS)
 }
 
 // ============================================================================
@@ -651,7 +751,7 @@ export async function uploadFiles(
   const targetFolderId = folderId ?? null
   if (current.currentKbId === kbId && current.currentFolderId === targetFolderId) {
     const listSort = sort ?? current.fileListSort ?? undefined
-    await loadKbItems(kbId, targetFolderId, listSort)
+    await loadKbItems(kbId, targetFolderId, listSort, { pollIndexStatus: true })
   }
 
   return taskIds

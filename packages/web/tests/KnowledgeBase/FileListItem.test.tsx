@@ -45,6 +45,22 @@ describe('FileListItem', () => {
     expect(screen.getByText('2.0 KB')).toBeDefined()
     expect(screen.getByText('2026/06/17')).toBeDefined()
     expect(screen.getByRole('button', { name: /打开文档/ })).toBeDefined()
+    expect(screen.getByText('就绪')).toBeDefined()
+  })
+
+  it.each([
+    { status: 'uploaded' as const, label: '排队中' },
+    { status: 'indexing' as const, label: '索引中' },
+    { status: 'failed' as const, label: '失败' },
+  ])('renders status badge $status', ({ status, label }) => {
+    render(<FileListItem item={makeDocument(status)} isFolder={false} onClick={vi.fn()} />)
+    expect(screen.getByText(label)).toBeDefined()
+  })
+
+  it('shows errorMessage on failed badge title', () => {
+    const item = { ...makeDocument('failed'), errorMessage: 'Knowledge AI failed' }
+    render(<FileListItem item={item} isFolder={false} onClick={vi.fn()} />)
+    expect(screen.getByText('失败').getAttribute('title')).toBe('Knowledge AI failed')
   })
 
   it('opens item on click and Enter/Space', async () => {

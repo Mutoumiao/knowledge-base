@@ -1,6 +1,7 @@
 import { FolderIcon } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { formatFileSize } from '@/utils/file'
+import { getDocumentStatusConfig, getDocumentStatusTitle } from '../document-status'
 import type { DocumentItem, Folder } from '../types'
 
 interface FileGridItemProps {
@@ -30,21 +31,6 @@ const FILE_ICON_BG: Record<string, string> = {
   pptx: 'bg-[#FFC107]',
   md: 'bg-[#9E9E9E]',
 }
-
-// TODO(RAG): RAG 索引链路当前冻结，文档处理状态（已上传/分块中/嵌入中/索引中/就绪/失败）
-// 由后端 IndexingWorker 真实写入，但在 embedding 等环节注定失败，徽章会误导用户。
-// 冻结期间隐藏全部状态徽章；待 RAG SDK 上线后恢复以下 DOCUMENT_STATUS_CONFIG 及徽章渲染。
-// const DOCUMENT_STATUS_CONFIG: Record<
-//   DocumentItem['status'],
-//   { bg: string; text: string; label: string }
-// > = {
-//   uploaded: { bg: 'bg-[#9E9E9E]', text: 'text-white', label: '已上传' },
-//   chunking: { bg: 'bg-[#5B7CFA]', text: 'text-white', label: '分块中' },
-//   embedding: { bg: 'bg-[#5B7CFA]', text: 'text-white', label: '嵌入中' },
-//   indexing: { bg: 'bg-[#5B7CFA]', text: 'text-white', label: '索引中' },
-//   ready: { bg: 'bg-[#4CAF50]', text: 'text-white', label: '就绪' },
-//   failed: { bg: 'bg-[#F44336]', text: 'text-white', label: '失败' },
-// }
 
 interface FolderCardProps {
   item: Folder
@@ -111,8 +97,10 @@ function DocumentCard({ item, onClick }: { item: DocumentItem; onClick: () => vo
   const date = new Date(item.updatedAt)
   const dateStr = `${date.getMonth() + 1}月${date.getDate()}日 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
   const firstLetter = item.name.charAt(0).toUpperCase()
-  // TODO(RAG): 冻结期间隐藏文档处理状态徽章，待 RAG 上线恢复
-  // const statusConfig = DOCUMENT_STATUS_CONFIG[item.status] || null
+  const statusConfig = getDocumentStatusConfig(item.status)
+  const statusTitle = statusConfig
+    ? getDocumentStatusTitle(item.status, item.errorMessage)
+    : undefined
 
   return (
     <div className="group relative flex h-[150px] flex-col gap-2.5 rounded-xl border border-[#E7EAF0] bg-white p-3.5 transition-colors hover:bg-[#F7F8FA] focus-within:ring-2 focus-within:ring-[#5B7CFA] focus-within:ring-offset-2">
@@ -121,12 +109,13 @@ function DocumentCard({ item, onClick }: { item: DocumentItem; onClick: () => vo
         type="button"
         className="absolute inset-0 z-0 cursor-pointer rounded-xl focus-visible:outline-none"
         onClick={onClick}
-        aria-label={`打开文档 ${item.name}`}
+        aria-label={`打开文档 ${item.name}${statusConfig ? `，${statusConfig.label}` : ''}`}
+        title={statusTitle}
       />
-      {/* TODO(RAG): 冻结期间隐藏文档处理状态徽章，待 RAG 上线恢复
       {statusConfig && (
         <span
           className={cn(
+            // pointer-events-none：点击穿透到整卡按钮；失败原因通过 button title 暴露
             'absolute right-2 top-2 z-10 rounded-full px-1.5 py-0.5 text-[10px] font-medium pointer-events-none',
             statusConfig.bg,
             statusConfig.text,
@@ -135,7 +124,6 @@ function DocumentCard({ item, onClick }: { item: DocumentItem; onClick: () => vo
           {statusConfig.label}
         </span>
       )}
-      */}
       <div className="relative z-10 flex items-center justify-between pointer-events-none">
         <div className={cn('flex h-10 w-10 items-center justify-center rounded-[10px]', iconBg)}>
           <span className="text-base font-bold text-white">{firstLetter}</span>
@@ -163,7 +151,7 @@ function DocumentCard({ item, onClick }: { item: DocumentItem; onClick: () => vo
       </div>
       <div className="relative z-10 flex flex-1 flex-col gap-1 pointer-events-none">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-[#1F2328]">{item.name}</span>
+          <span className="text-sm font-medium text-[#1F2328] truncate">{item.name}</span>
         </div>
         <span
           className={cn(

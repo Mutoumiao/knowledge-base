@@ -7,6 +7,7 @@ vi.mock('@/overlays/services/overlay-service', () => ({
 
 vi.mock('@/features/KnowledgeBase/services', () => ({
   loadKbItems: vi.fn(),
+  cancelIndexStatusPoll: vi.fn(),
   searchKbItems: vi.fn(),
   previewDocument: vi.fn(),
   removeItem: vi.fn(),

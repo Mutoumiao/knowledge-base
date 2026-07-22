@@ -162,6 +162,7 @@ describe('kb services', () => {
           mimeType: 'application/pdf',
           size: 1024,
           status: 'ready',
+          errorMessage: null,
           createdAt: '',
           updatedAt: '',
         },

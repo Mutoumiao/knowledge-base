@@ -16,6 +16,8 @@ export interface DocumentItem {
   mimeType: string | null
   size: number | null
   status: 'uploaded' | 'chunking' | 'embedding' | 'indexing' | 'ready' | 'failed'
+  /** 索引失败原因（后端 Document.errorMessage） */
+  errorMessage?: string | null
   createdAt: string
   updatedAt: string
 }
