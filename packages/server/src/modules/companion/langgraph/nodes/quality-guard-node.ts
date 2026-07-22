@@ -1,6 +1,7 @@
 import { fallbackReplyQualityGuard, replyQualityGuardSchema } from '@goferbot/data/schemas'
 import { Injectable, Logger } from '@nestjs/common'
 import type { CompanionState, NodeExecutionContext, QualityGuardResult } from '../interfaces.js'
+import { collapseRepeatedReply, ensureCrisisHotlineInReply } from '../reply-text.util.js'
 
 const FORBIDDEN_PATTERNS: Array<{
   code: QualityGuardResult['violations'][number]['code']
@@ -59,6 +60,14 @@ const FORBIDDEN_PATTERNS: Array<{
   },
 ]
 
+const ADVICE_SENTENCE_REGEX = /建议|应该|最好|试试|不妨|可以试|推荐你/
+const PRESENCE_FALLBACK: Record<string, string> = {
+  quiet_presence: '我在这儿。',
+  deep_comfort: '我在听。你不用急着说，我陪你。',
+  calm_deescalation: '我在。先慢慢来，不着急。',
+  relationship_repair: '刚才没接好，对不起。你愿意再跟我说说吗？',
+}
+
 @Injectable()
 export class QualityGuardNode {
   private readonly logger = new Logger(QualityGuardNode.name)
@@ -67,15 +76,89 @@ export class QualityGuardNode {
     state: CompanionState,
     _ctx: NodeExecutionContext,
   ): Promise<Partial<CompanionState>> {
-    const reply = state.assistantReply
-    if (!reply) {
+    const original = state.assistantReply
+    if (!original) {
       return { quality: fallbackReplyQualityGuard as QualityGuardResult }
     }
 
+    let reply = original
+    const adviceLimit = state.policy?.adviceLimit ?? 1
+    const questionLimit = state.policy?.questionLimit ?? 2
+    const maxSentences = state.policy?.sentenceBudget?.max ?? 4
+    const listenFirstRoutes = new Set([
+      'deep_comfort',
+      'calm_deescalation',
+      'quiet_presence',
+      'relationship_repair',
+    ])
+    const route = state.route?.route
+    const forceListenFirst = route ? listenFirstRoutes.has(route) : false
+
+    // —— 软修复（G-QL-01）：观测之外，对「先接后推」违规做规则修复 ——
+    let repaired = false
+
+    // 1) 破除沉浸：直接换安全兜底
+    if (/(作为一个AI|我是一个AI|根据我的程序|我的算法|系统提示)/.test(reply)) {
+      reply = PRESENCE_FALLBACK[route ?? ''] ?? '嗯，我在听。你可以慢慢说。'
+      repaired = true
+    }
+
+    // 2) 禁止建议时剥掉建议句
+    if (adviceLimit === 0 || forceListenFirst) {
+      const stripped = this.stripAdviceSentences(reply)
+      if (stripped !== reply && stripped.trim().length >= 4) {
+        reply = stripped
+        repaired = true
+      }
+    }
+
+    // 3) 问题过多：只保留前 questionLimit 个问句，其余去问号改陈述或删除
+    if (questionLimit === 0) {
+      const noQ = this.stripQuestions(reply)
+      if (noQ !== reply && noQ.trim().length >= 4) {
+        reply = noQ
+        repaired = true
+      }
+    } else if (questionLimit > 0) {
+      const limited = this.limitQuestions(reply, questionLimit)
+      if (limited !== reply) {
+        reply = limited
+        repaired = true
+      }
+    }
+
+    // 4) 句数超预算：截断
     const sentences = this.splitSentences(reply)
-    const sentenceCount = sentences.length
-    const questionCount = sentences.filter((s) => /[？?]$/.test(s.trim())).length
-    const adviceCount = sentences.filter((s) => /建议|应该|最好|试试/.test(s)).length
+    if (sentences.length > maxSentences) {
+      reply = sentences.slice(0, maxSentences).join('')
+      repaired = true
+    }
+
+    // 5) 先接后推：首句若是建议，与次句交换或插入承接
+    if (forceListenFirst && adviceLimit === 0) {
+      const fixed = this.ensureListenFirstOpening(reply, state.userMessage)
+      if (fixed !== reply) {
+        reply = fixed
+        repaired = true
+      }
+    }
+
+    reply = collapseRepeatedReply(reply.trim())
+    if (!reply) {
+      reply = PRESENCE_FALLBACK[route ?? ''] ?? '嗯嗯，我在听。'
+      repaired = true
+    }
+    const withHotline = ensureCrisisHotlineInReply(reply, state.safety, state.userMessage)
+    if (withHotline !== reply) {
+      reply = withHotline
+      repaired = true
+    }
+
+    // —— 对（可能已修复的）文本再计违规 ——
+    const finalSentences = this.splitSentences(reply)
+    const sentenceCount = finalSentences.length
+    const questionCount = finalSentences.filter((s) => /[？?]$/.test(s.trim())).length
+    const adviceCount = finalSentences.filter((s) => ADVICE_SENTENCE_REGEX.test(s)).length
 
     const violations: QualityGuardResult['violations'] = []
 
@@ -102,6 +185,7 @@ export class QualityGuardNode {
     }
 
     for (const { code, pattern, severity } of FORBIDDEN_PATTERNS) {
+      pattern.lastIndex = 0
       const match = pattern.exec(reply)
       if (match) {
         violations.push({
@@ -126,8 +210,18 @@ export class QualityGuardNode {
       violations: violations.slice(0, 12),
     })
 
-    this.logger.debug(`[qualityGuardNode] status=${status} violations=${violations.length}`)
-    return { quality: result }
+    this.logger.debug(
+      `[qualityGuardNode] status=${status} violations=${violations.length} repaired=${repaired}`,
+    )
+
+    const patch: Partial<CompanionState> = { quality: result }
+    if (repaired && reply !== original) {
+      // 只改 assistantReply，禁止再写 partialTokens：
+      // 否则 stream 会把「修复后全文」当第二段 delta 拼出近乎双份的回复（裁判 P0）。
+      patch.assistantReply = reply
+      patch.lastFallback = 'quality-soft-repair'
+    }
+    return patch
   }
 
   private splitSentences(text: string): string[] {
@@ -135,5 +229,59 @@ export class QualityGuardNode {
       .split(/(?<=[。！？!?\n])/)
       .map((s) => s.trim())
       .filter((s) => s.length > 0)
+  }
+
+  private stripAdviceSentences(text: string): string {
+    const kept = this.splitSentences(text).filter((s) => !ADVICE_SENTENCE_REGEX.test(s))
+    if (kept.length === 0) return text
+    return kept.join('')
+  }
+
+  private stripQuestions(text: string): string {
+    return this.splitSentences(text)
+      .map((s) => s.replace(/[？?]+$/g, '。'))
+      .join('')
+  }
+
+  private limitQuestions(text: string, maxQ: number): string {
+    let q = 0
+    return this.splitSentences(text)
+      .map((s) => {
+        if (/[？?]$/.test(s.trim())) {
+          q += 1
+          if (q > maxQ) return s.replace(/[？?]+$/g, '。')
+        }
+        return s
+      })
+      .join('')
+  }
+
+  /**
+   * 若首句像建议/清单，尝试把镜像句提前；无镜像时用轻量承接前缀。
+   */
+  private ensureListenFirstOpening(text: string, userMessage: string): string {
+    const sentences = this.splitSentences(text)
+    if (sentences.length === 0) return text
+    const first = sentences[0] ?? ''
+    if (!ADVICE_SENTENCE_REGEX.test(first) && !/^(首先|第一|建议|你可以)/.test(first)) {
+      return text
+    }
+    // 找后续非建议句提前
+    const mirrorIdx = sentences.findIndex(
+      (s, i) => i > 0 && !ADVICE_SENTENCE_REGEX.test(s) && s.length >= 4,
+    )
+    if (mirrorIdx > 0) {
+      const reordered = [sentences[mirrorIdx], ...sentences.filter((_, i) => i !== mirrorIdx)]
+      return reordered.join('')
+    }
+    // 注入轻量承接
+    const snippet = (userMessage ?? '').replace(/\s+/g, '').slice(0, 12)
+    const prefix =
+      snippet.length >= 4
+        ? `我听到你说${snippet}${snippet.length >= 12 ? '…' : ''}。`
+        : '我在听，先把你说的接住。'
+    // 去掉原建议首句
+    const rest = sentences.slice(1).join('')
+    return `${prefix}${rest || '你愿意的话，我们可以慢慢说。'}`
   }
 }

@@ -50,10 +50,17 @@ AI Companion MUST 保持为独立产品能力：独立路由、独立 API、独�
 #### Scenario: Quality check failure is observational
 
 - **WHEN** quality guard 节点将回复标为 `status: 'fail'`（或等价未通过）
-- **THEN** 系统 MUST 仍保留 `assistantReply` 供下发与落库
+- **THEN** 系统 MUST 仍保留 `assistantReply` 供下发与落库（经软修复后的文本若存在则用修复版）
 - **AND** 系统 MUST 将 quality 结果纳入消息 metadata
 - **AND** 系统 MUST NOT 仅因 quality fail 而跳过 summary 与 memory_candidate/memory_extraction 路径
 - **AND** safety `refuse` / `crisis_support` 仍为硬中断（与 quality 观测语义独立）
+
+#### Scenario: Quality 规则软修复（G-QL-01）
+
+- **WHEN** quality 节点检测到建议超预算、问句过多、句数超标、破沉浸或「先接后推」开场违规时
+- **THEN** 系统 MAY 用规则（剥建议句、限问句、截句数、破沉浸兜底句、调整开场）改写 `assistantReply`
+- **AND** 改写后 MUST 仍走观测型路径（继续 summary/memory），MUST NOT 因软修复失败而丢弃整轮回复
+- **AND** 软修复 MUST 保持零 LLM（QualityGuard 仍为纯规则节点）
 
 #### Scenario: Memory extraction skip
 
@@ -78,7 +85,7 @@ AI Companion MUST 保持为独立产品能力：独立路由、独立 API、独�
 #### Scenario: Rule engine nodes
 
 - **WHEN** route 节点解析对话策略时
-- **THEN** 它应通过 O(1) 查找将（intent、emotion、relationship）与 15 个硬编码的 ROUTE_RULES 匹配，无需调用 LLM
+- **THEN** 它应通过纯规则将（intent、emotion、relationship）与硬编码 ROUTE_RULES 做**分层匹配**（见「Route Rules 分层匹配」），无需调用 LLM
 
 #### Scenario: Policy lookup
 
@@ -213,28 +220,40 @@ Companion 的 LLM 调用 SHALL 通过 LangChain ChatOpenAI 适配层完成，MUS
 - **WHEN** 生成对话摘要时
 - **THEN** CONVERSATION_SUMMARY_MAX_LENGTH 限制为 1600 字符
 
-### Requirement: Route Rules 三维度匹配规则结构
+### Requirement: Route Rules 分层匹配规则结构
 
-RouteNode SHALL 作为纯规则引擎，通过三维度元组匹配确定对话路线和响应行为标志，MUST 零 LLM 成本，MUST 输出六个字段。
+RouteNode SHALL 作为纯规则引擎，通过 intent / emotion / relationship 与硬编码 ROUTE_RULES 的**分层匹配**确定对话路线与行为标志，MUST 零 LLM 成本。
 
 证据来源：
-- `d:\projects\ai-stared-project\knowledge-base\.trellis\spec\server\backend\companion-pipeline.md`（Route Rules 章节）
-- `packages/server/src/modules/companion/langgraph/nodes/route-node.ts#L27-L178`
+- `packages/server/src/modules/companion/langgraph/nodes/route-node.ts`（ROUTE_RULES、`matchRule`）
+- `.trellis/spec/server/backend/companion-pipeline.md`
 
 #### Scenario: 三维度匹配输入
 
 - **WHEN** route 节点解析对话策略时
-- **THEN** 系统 SHALL 接收三个维度作为匹配输入：`intent`（用户意图类别，如 emotional_support/casual_chat/question）、`emotion`（检测到的用户情绪，如 sad/anxious/happy/neutral）、`relationship`（当前关系阶段，如 trusted_companion/building_trust）
+- **THEN** 系统 SHALL 接收三个维度作为匹配输入：`intent`、`emotion`、`relationship`（阶段）
+
+#### Scenario: 分层优先级（禁止仅三元组精确）
+
+- **WHEN** 规则表中同时存在精确三元组与更宽松规则时
+- **THEN** 系统 MUST 按 priority 分层：`3` = intent+emotion+relationship 全约束；`2` = intent+emotion；`1` = 仅 intent 或仅 emotion 等默认
+- **AND** 同 priority 时 MUST 优先字段约束更严的规则（intent 权重大于 emotion 大于 relationship）
+- **AND** MUST NOT 仅做三元组精确匹配后一律落到 `gentle_clarification` 默认（历史 bug：情感轮无法命中 deep_comfort 等先接策略）
+
+#### Scenario: memory_update 路由到 memory_ack
+
+- **WHEN** intent 为 `memory_update`（用户要求记住某事）
+- **THEN** 系统 MUST 将 route 解析为 `memory_ack`（短确认、少建议）
 
 #### Scenario: 六字段规则输出
 
-- **WHEN** 三维度元组匹配到 15 条硬编码 ROUTE_RULES 之一时
-- **THEN** 系统 SHALL 输出六个字段：`route`（策略名称，如 deep_comfort/light_companion）、`responseLength`（short/medium/long）、`shouldAskQuestion`（boolean）、`shouldShareExperience`（boolean）、`shouldUseNickname`（boolean）、`shouldUseMemory`（boolean）
+- **WHEN** 分层匹配命中一条 ROUTE_RULES 时
+- **THEN** 系统 SHALL 输出结构化 route 结果（含 `route`、`responseLength`、`shouldAskQuestion`、`shouldGiveAdvice`、`shouldUsePetName`、`shouldMirrorEmotion`、`routeGuidance` 等约定字段）
 
 #### Scenario: 确定性规则匹配
 
 - **WHEN** 相同的 (intent, emotion, relationship) 输入
-- **THEN** 系统 MUST 返回相同的路由结果，因为规则匹配是确定性的 O(1) 查找，不依赖 LLM 推理
+- **THEN** 系统 MUST 返回相同的路由结果（确定性查找，不依赖 LLM）
 
 ### Requirement: Policy Packs 策略包字段结构
 
@@ -272,27 +291,34 @@ LangChain PromptTemplates SHALL 以链式方式连接，每个节点的输出 MU
 - **WHEN** 系统初始化 prompts.ts 时
 - **THEN** 系统 MUST 定义六个 PromptTemplates：safety、intent、emotion、relationshipStage、memoryCandidate、memoryExtraction
 
-### Requirement: Memory Keyword Fallback
+### Requirement: Memory Keyword Fallback 与回忆探针
 
-系统 SHALL 通过正则表达式关键词触发器强制进行记忆提取，MUST 在用户输入匹配关键词时绕过 LLM 判断，确保显式记忆命令不被遗漏。
+系统 SHALL 通过正则关键词触发强制记忆提取（显式「记住…」不被 LLM 漏掉）；同时 MUST 将「回忆探针」与写入命令区分，探针路径禁止写入新记忆。
 
 证据来源：
-- `d:\projects\ai-stared-project\knowledge-base\.trellis\spec\server\backend\companion-pipeline.md`（Memory Keyword Fallback 章节）
-- `packages/server/src/modules/companion/langgraph/nodes/memory-candidate-node.ts#L15-L16`
+- `packages/server/src/modules/companion/langgraph/nodes/_shared.ts`（`isRecallProbe` / `heuristicMemoryFacts` / `shouldSkipMemoryCandidateFast`）
+- `packages/server/src/modules/companion/langgraph/nodes/memory-candidate-node.ts`
+- `packages/server/src/modules/companion/langgraph/nodes/memory-extraction-node.ts`
 
 #### Scenario: 关键词正则匹配
 
 - **WHEN** memory_candidate 节点接收用户输入时
-- **THEN** 系统 MUST 使用正则模式 `记住|以后|别再|我喜欢|我讨厌|我的.*是|总是` 匹配用户输入
+- **THEN** 系统 MUST 使用记忆关键词/信号正则匹配用户输入（如记住、以后、别再、我喜欢 等）
 
 #### Scenario: 强制记忆提取
 
-- **WHEN** 用户输入匹配任一关键词时
-- **THEN** 系统 SHALL 强制将 `shouldExtract` 设为 `true`，绕过 LLM 判断，确保 memory_extraction 节点必须执行
+- **WHEN** 用户输入匹配写入类关键词且**不是**纯回忆探针时
+- **THEN** 系统 SHALL 强制将 `shouldExtract` 设为 `true`（或启发式产出候选事实），确保 memory_extraction 可执行并落库
+
+#### Scenario: 回忆探针只读不写
+
+- **WHEN** 用户输入为「你还记得… / 记得吗…」类回忆探针（同句无显式「记住」写入指令）
+- **THEN** memory_candidate 与 memory_extraction MUST 判定 `shouldExtract: false` / 空抽取
+- **AND** MUST NOT 将探针问句本身写入长期记忆
 
 #### Scenario: 无关键词时正常 LLM 判断
 
-- **WHEN** 用户输入不匹配任何关键词时
+- **WHEN** 用户输入不匹配强制关键词且未命中快速跳过时
 - **THEN** 系统 SHOULD 由 LLM 判断是否需要提取记忆（shouldExtract 由 LLM 决定）
 
 ### Requirement: SharedNodeFactory 节点回退值表
@@ -438,6 +464,12 @@ Companion 对话 SHALL 以流式方式呈现助手回复；**服务端**保持 C
 - **WHEN** 本轮产生非空助手回复并准备结束流时
 - **THEN** 服务端 MUST 先持久化助手消息（含 metadata 快照），再推送 `done` 事件
 - **AND** 以便客户端收到完成时历史已可读，并避免连发时 `findRecent` 缺上轮助手
+
+#### Scenario: 记忆落库 await 于 done 之前
+
+- **WHEN** 本轮 `extractedMemories` 非空并准备结束流时
+- **THEN** 服务端 MUST `await persistMemories(...)` 完成后再推送 `done`（及可选的 `memories` 侧车事件）
+- **AND** MUST NOT 使用 `queueMicrotask` / fire-and-forget 异步写记忆（会导致下一轮 prepareContext 与 API 轮询竞态丢记忆）
 
 ### Requirement: 行为权威与参考实现对齐
 
@@ -640,12 +672,25 @@ Companion 管线 LLM 调用 MUST 仅通过服务端配置解析（LlmConfigServi
 
 ### Requirement: 记忆运行时与管理
 
-记忆抽取 MUST 保持三级过滤语义（规则快速跳过 → 候选判断 → 抽取）；注入 MUST 遵守 `MEMORY_INJECTION_LIMIT`（默认 12）与按 importance 等约定排序；类型 MUST 为五种 MemoryType。管理面 MUST 支持按伴侣列出、更新内容/importance/status、删除（软删）。
+记忆抽取 MUST 保持三级过滤语义（规则快速跳过 → 候选判断 → 抽取）；候选事实与抽取结果 MUST 经 `sanitizeMemoryFact` 去噪后方可进入 `extractedMemories` / 落库；注入 MUST 先 `filterInjectableMemories` 再按与本轮用户消息的**相关度优先**排序（相关度权重大于单纯 importance），并遵守 `MEMORY_INJECTION_LIMIT`（默认 12）；类型 MUST 为五种 MemoryType。管理面 MUST 支持按伴侣列出、更新内容/importance/status、删除（软删）。
 
-#### Scenario: 注入限额
+证据来源：
+- `packages/server/src/modules/companion/langgraph/nodes/_shared.ts`
+- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts`（注入过滤）
+- `packages/server/src/modules/companion/companion-chat-stream.service.ts`（await persistMemories）
 
-- **WHEN** 活跃记忆超过 `MEMORY_INJECTION_LIMIT` 时
-- **THEN** 注入 system prompt 的记忆条数 MUST NOT 超过该限额
+#### Scenario: 事实去噪
+
+- **WHEN** 候选或抽取产出事实字符串时
+- **THEN** 系统 MUST 丢弃：过短/过长、问句形态、回忆探针残片、敏感凭证、无稳定偏好实体的指令空话
+- **AND** 清洗后为空的事实 MUST NOT 落库
+
+#### Scenario: 注入限额与相关度排序
+
+- **WHEN** 活跃记忆超过 `MEMORY_INJECTION_LIMIT` 或需要注入 system prompt 时
+- **THEN** 注入条数 MUST NOT 超过该限额
+- **AND** 排序 MUST 优先与本轮 `userMessage` 关键词/双字滑窗重叠高的条目，其次 importance
+- **AND** 历史噪声（`sanitizeMemoryFact` 为 null）MUST NOT 注入 prompt
 
 #### Scenario: 管理 API
 
@@ -657,6 +702,28 @@ Companion 管线 LLM 调用 MUST 仅通过服务端配置解析（LlmConfigServi
 
 - **WHEN** 用户打开记忆管理页时
 - **THEN** 系统 MUST 支持类型筛选与编辑/删除或状态切换至少一种写操作
+
+### Requirement: Generate 先接后推硬约束
+
+generate 节点 MUST 将 policy 的 openingMove / adviceLimit / question 预算写入 system prompt；对 `deep_comfort` / `calm_deescalation` / `quiet_presence` / `relationship_repair` 等「先接」路由，MUST 显式约束前 1–2 句只做情绪/事实承接，禁止方法论开场。
+
+证据来源：
+- `packages/server/src/modules/companion/langgraph/nodes/generate-node.ts`（`buildHardConstraints`）
+
+#### Scenario: 情感轮开场
+
+- **WHEN** 当前 route 属于先接路由，或 openingMove 为 comfort/mirror/acknowledge 时
+- **THEN** prompt 硬约束 MUST 要求第一句复述/镜像/确认，禁止用建议清单开场
+
+#### Scenario: adviceLimit=0
+
+- **WHEN** 本轮 policy.adviceLimit 为 0 时
+- **THEN** prompt MUST 禁止「建议你/你应该/最好/试试」类方案句；quality 软修复 SHOULD 剥除残留建议句
+
+#### Scenario: 回忆探针作答
+
+- **WHEN** 用户做回忆探针且已有长期记忆时
+- **THEN** prompt MUST 要求依据长期记忆具体作答或诚实不确定，MUST NOT 假装写入新记忆
 
 ### Requirement: 伴侣来源双轨（system / user）
 

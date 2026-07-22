@@ -179,6 +179,7 @@ export type RouteName =
   | 'gentle_clarification'
   | 'practical_support'
   | 'quiet_presence'
+  | 'memory_ack'
 
 export type PolicyResult = {
   policy: PolicyName

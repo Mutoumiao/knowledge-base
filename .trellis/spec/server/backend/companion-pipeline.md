@@ -69,32 +69,86 @@ orderBy createdAt/id DESC → take(limit) → reverse() → 时间正序
 - Graph Annotation 含 `messageCount`；`relationship-stage-node` 必须用 `resolveRelationshipMessageCount(state)`（优先 `state.messageCount`）。
 - 仅在未注入时降级到 recent 长度；**新代码禁止**再写 `recentMessages.length` 作为主路径。
 
-### SSE：先 persist 再 done
+### Quality 观测型 + 规则软修复（G-QL-01）
 
-`CompanionChatStreamService`：有非空 reply 时 **`await persistAssistantMessage` 后再 yield `done`**。避免：
+`quality → summary` 边恒连；fail **不** `end_guard` 跳过 summary/memory。Safety `refuse`/`crisis_support` 仍硬中断。
 
-1. 客户端收到完成但历史列表尚无助手；
-2. 用户连发第二轮时 `findRecent` 缺上轮助手。
+QualityGuard **零 LLM**，在打分之外可对 `assistantReply` 做规则软修复（写入 patch 后继续下游）：
+
+1. 破沉浸（「作为一个 AI…」）→ 按 route 的 presence 兜底短句  
+2. `adviceLimit===0` 或先接路由 → 剥建议句  
+3. 问句超 `questionLimit` → 限问 / 去问号  
+4. 句数超 `sentenceBudget.max` → 截断  
+5. 先接路由 + adviceLimit=0 → 调整开场，避免建议句打头  
+
+`lastFallback = 'quality-soft-repair'` 仅作观测；**不要**因 soft-repair 再调一次 LLM 改写（除非产品明确要 LLM rewrite 二期）。
+
+### SSE：先 persist 助手 + await 记忆，再 done
+
+`CompanionChatStreamService` 成功路径顺序：
+
+1. `await persistAssistantMessage`（非空 reply）  
+2. **`await persistMemories`**（extracted 非空）— **禁止** `queueMicrotask` / 不 await  
+3. `yield done` → 可选 `summary` / `memories` 侧车  
 
 `persistAssistantMessage`：content + `buildPipelineMetadataSnapshot`（quality 必含；**不含**完整 system prompt）+ messageCount+1 + `lastAssistantMessage*` 刷新。
 
-### Quality 观测型（与 OpenSpec 一致）
-
-`quality → summary` 边恒连；fail **不** `end_guard` 跳过 summary/memory。Safety `refuse`/`crisis_support` 仍硬中断。
+竞态：若不 await 记忆，下一轮 `prepareContext` 读库与 L1 轮询会看到「记忆未写入」。
 
 ### 节点 / LLM 既有约定
 
 - **SharedNodeFactory.invokeStructured**：所有调 LLM 的节点走 `buildVariables → prompt.invoke → invokeWithFallback → fallback`。禁止裸 `llm.invoke`。
 - **LLM 失败不抛错**：返回 fallback，保证管线不中断。
 - **纯规则节点**：Route / Policy / QualityGuard 零 LLM。
-- **Memory 关键词回退**：正则强制 `shouldExtract`，见 OpenSpec。
+- **Memory 关键词回退**：正则强制 `shouldExtract`，见 OpenSpec；**回忆探针例外**（见下）。
 - **关怀 generate**：模板路径，**禁止**调完整 11 节点 Graph。
+
+### Route 分层匹配（软匹配）
+
+`route-node.ts` 的 `matchRule`：**priority 3（三元组）> 2（intent+emotion）> 1（仅 intent/仅 emotion）**；同 priority 字段越严越优先。
+
+- 历史坑：只做三元组精确 → 多数情感轮落到 `gentle_clarification`，`deep_comfort` 策略包几乎不生效。  
+- `intent=memory_update` → route `memory_ack`（短确认）。  
+- 新增规则时写清 `priority`，宽松默认放 priority 1，精确情感场景放 3。
+
+### 记忆去噪与注入排序
+
+统一入口：`SharedNodeFactory`（`_shared.ts`）
+
+| 方法 | 用途 |
+|------|------|
+| `isRecallProbe` | 「你还记得…吗」只读；同句含「记住」写入则不算纯探针 |
+| `sanitizeMemoryFact` / `sanitizeMemoryFacts` | 落库前去噪；问句/残片/空话 → null |
+| `shouldSkipMemoryCandidateFast` | 探针 / 寒暄 / 重复 / 敏感 → 跳过 LLM 抽取 |
+| `heuristicMemoryFacts` | 显式「记住…」切分兜底；探针返回 [] |
+| `filterInjectableMemories` | 注入前再滤历史噪声 |
+| `rankMemoriesForPrompt` | **相关度优先**（token/双字滑窗）+ importance；避免无关高 importance 霸榜 |
+| `formatMemoriesForPrompt` | filter → rank → 格式化为 prompt 列表 |
+
+候选与抽取节点：**双保险**都走 sanitize；pipeline `prepareContext` 注入也必须 filter。
+
+历史噪声清理（运维，非热路径）：`packages/server/scripts/cleanup-noisy-memories.mjs`（Prisma 从 `packages/server` 解析）。
+
+### Generate 先接后推
+
+`generate-node.buildHardConstraints`：
+
+- openingMove ∈ comfort/mirror/acknowledge → 第一句必须承接  
+- route ∈ deep_comfort / calm_deescalation / quiet_presence / relationship_repair → 前两句禁止方法论  
+- adviceLimit=0 → 全文禁方案句  
+- 回忆探针 + 已有记忆 → 点具体内容或诚实不确定  
+
+Policy 的 sentence/question/advice 预算 MUST 写进 prompt 正文，不要只写在 metadata。
 
 ## Testing Checklist
 
 - [ ] 每个节点单独测试（mock LLM 响应，覆盖成功与失败两条路径）
 - [ ] Safety `refuse` / `crisis_support` 中断：图 END、**不**落助手、user 可已落库（设计 A）
 - [ ] Quality 观测型：fail 时主回复仍落库，图继续 summary/memory
+- [ ] Quality 软修复：adviceLimit=0 剥建议句；破沉浸兜底；`assistantReply` 被 patch
+- [ ] Route 分层：emotional_support+sad 在非 trusted 关系仍应倾向 deep_comfort 类，而非默认 clarify
+- [ ] 记忆去噪：`UT-MEM-denoise`（探针不写、sanitize 丢问句、filter/rank）
+- [ ] 记忆 await：stream 路径 done 前库中已有本轮 extracted（集成/L1 同会话记忆）
 - [ ] `messageCount`：relationship 使用累计数，非 `recent.length`（`UT-REL-msg-count` / `IT-REL-message-count`）
 - [ ] `findRecent`：最新 N 条正序（`IT-CTX-recent-limit`）
 - [ ] 反馈注入非空 + 限额 8（`IT-FB-inject`）
@@ -107,7 +161,12 @@ orderBy createdAt/id DESC → take(limit) → reverse() → 时间正序
 
 - [ ] prepareContext 是否仍「先 load 再 save user」且 archived 在落库前
 - [ ] relationship 是否仍用 `messageCount` 而非 recent 窗口
-- [ ] done 前是否 await 助手落库
+- [ ] done 前是否 await 助手落库 **且** await 记忆落库
+- [ ] 注入记忆是否 filter + rank（相关度），而非只按 importance 截断
+- [ ] 回忆探针是否双节点禁止写入；sanitize 是否覆盖问句/残片
+- [ ] Route 是否分层匹配；memory_update → memory_ack
+- [ ] generate 硬约束是否含先接路由与 adviceLimit
+- [ ] Quality 是否仍零 LLM，软修复是否写回 assistantReply
 - [ ] 新节点是否走 SharedNodeFactory；Route/Policy/Quality 是否零 LLM
 - [ ] 业务行为变更是否已回写 OpenSpec companion / companion-care / companion-persona
 - [ ] 关怀路径是否误接入完整 Graph
@@ -128,8 +187,8 @@ orderBy createdAt/id DESC → take(limit) → reverse() → 时间正序
 
 ### 先 done 后落库
 
-**症状**：连发第二句时上下文缺上轮助手；刷新前历史空白。  
-**正确**：`await persistAssistantMessage` → `yield done`。
+**症状**：连发第二句时上下文缺上轮助手；刷新前历史空白；或「刚记住」下一轮读不到。  
+**正确**：`await persistAssistantMessage` → `await persistMemories` → `yield done`。
 
 ### 反馈写死空数组
 
@@ -139,7 +198,30 @@ orderBy createdAt/id DESC → take(limit) → reverse() → 时间正序
 ### Quality fail 当硬中断
 
 **症状**：低质回复被丢弃、memory 不跑。  
-**正确**：观测型——仍下发/落库 + 继续 summary/memory。
+**正确**：观测型——仍下发/落库 + 继续 summary/memory；可先规则软修复再落库。
+
+### 仅三元组精确路由
+
+**症状**：用户 sad/anxious 仍进 gentle_clarification，先接策略从不生效。  
+**原因**：要求 intent+emotion+relationship 全等才命中。  
+**正确**：分层 soft match（priority 3→2→1）。
+
+### 回忆探针写入记忆库
+
+**症状**：库中出现「你还记得我加班…」类噪声；generate 被污染。  
+**原因**：关键词「记得」误触发抽取，或 sanitize 漏问句。  
+**正确**：`isRecallProbe` 在 candidate/extraction 短路；sanitize + filterInjectable；运维脚本软删历史噪声。
+
+### 记忆 fire-and-forget
+
+**症状**：L1/连发下一轮「不记得」刚写入的事实。  
+**原因**：`persistMemories` 未 await 就 `done`。  
+**正确**：stream 路径 `await persistMemories` 再 yield done。
+
+### 注入只按 importance
+
+**症状**：回忆时答非所问，高重要无关条目霸占 prompt。  
+**正确**：`rankMemoriesForPrompt(userMessage)` 相关度优先。
 
 ### 安全硬中断写助手气泡凑观测
 
@@ -162,7 +244,11 @@ orderBy createdAt/id DESC → take(limit) → reverse() → 时间正序
 ## Reusable Patterns
 
 - **SharedNodeFactory 统一 LLM 调用模式** — 11 个节点共用一个工厂方法，统一错误处理、回退、日志、降级链。新增 LLM 节点直接复用。
-- **纯规则引擎节点模式** — O(1) 查找表替代 LLM 分类，零成本、确定性、可测试。适用于输入维度有限、规则可枚举的决策点。
+- **纯规则引擎节点模式** — 查找表/分层匹配替代 LLM 分类，零成本、确定性、可测试。适用于输入维度有限、规则可枚举的决策点。
+- **Route 分层 soft match** — 精确三元组不够用时降级到 intent+emotion / 仅 intent，避免默认 clarify 吞掉情感轮。
+- **质量规则软修复** — 观测型评分 + 确定性文本修补（剥句/截断/兜底），不阻塞 summary/memory，不增 LLM 预算。
+- **记忆读写分离** — 探针只读、写入经 sanitize 双保险；注入 filter + 相关度 rank。
 - **事件驱动配置热更新** — LlmConfigService 通过事件总线广播配置变更，节点订阅事件而非每次请求读取，避免缓存陈旧。
-- **关键词回退绕过 LLM** — 正则匹配强制触发特定行为（如记忆提取），作为 LLM 判断的兜底，确保显式用户命令不被遗漏。
+- **关键词回退绕过 LLM** — 正则匹配强制触发特定行为（如记忆提取），作为 LLM 判断的兜底；探针路径必须显式排除。
 - **Prompt 变量链式注入** — 上游节点输出作为下游 Prompt 的上下文变量，通过 `buildVariables` 统一构建，避免散落的字符串拼接。
+- **done 前双 await** — 助手消息 + 记忆均 await 落库后再发完成事件，消灭客户端/下一轮竞态。

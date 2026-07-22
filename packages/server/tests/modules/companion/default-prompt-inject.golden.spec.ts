@@ -16,8 +16,10 @@ describe('IT-PS-inject defaultPrompt into generate', () => {
     const graph = readFileSync(path.join(root, 'langgraph/graph.ts'), 'utf-8')
     const service = readFileSync(path.join(root, 'companion.service.ts'), 'utf-8')
 
-    expect(service).toMatch(/buildDefaultAgentPrompt/)
-    expect(pipeline).toMatch(/companionDefaultPrompt:\s*companion\.defaultPrompt/)
+    // Web 创建/更新走 resolvePersonaPrompt；pipeline 注入运行时权威 prompt（非库内陈旧 defaultPrompt）
+    expect(service).toMatch(/resolvePersonaPrompt/)
+    expect(pipeline).toMatch(/companionDefaultPrompt:\s*resolvedPrompt/)
+    expect(pipeline).toMatch(/resolvePromptForChat/)
     expect(graph).toMatch(/companionDefaultPrompt/)
     expect(generate).toMatch(/companionDefaultPrompt/)
   })

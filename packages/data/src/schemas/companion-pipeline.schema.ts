@@ -27,7 +27,8 @@ export const fallbackSafety = {
   category: 'other' as const,
   boundaryAction: 'soft_boundary' as const,
   reason: '安全边界判断暂时不可用，采用保守回复策略。',
-  responseGuidance: '用温和、克制、尊重边界的方式回复；不要提供操控、伤害、违法或高风险专业建议。',
+  responseGuidance:
+    '用温和、克制、尊重边界的方式回复；不要提供操控、伤害、违法或高风险专业建议。若涉及自伤危机：拒绝方法，表达关心，可提示希望24热线 400-161-9995 或北京心理危机干预 010-82951332。',
   allowMemoryExtraction: false,
 }
 
@@ -238,6 +239,7 @@ export const emotionRouteSchema = z.object({
     'gentle_clarification',
     'practical_support',
     'quiet_presence',
+    'memory_ack',
   ]),
   responseLength: z.enum(['very_short', 'short', 'medium', 'long']),
   shouldAskQuestion: z.boolean(),
@@ -467,4 +469,5 @@ export const INITIAL_HISTORY_LIMIT = 40
 // ============================================================================
 // Keyword Fallback for Memory (TR-6.3)
 // ============================================================================
-export const MEMORY_KEYWORD_REGEX = /记住|以后|别再|我喜欢|我不喜欢|我的习惯|我的边界/i
+export const MEMORY_KEYWORD_REGEX =
+  /记住|请记住|希望你记住|以后|下次|下一次|别再|不要再|我喜欢|我不喜欢|我的习惯|我的边界|我希望你/i
