@@ -26,6 +26,7 @@
     "db:cleanup:dry-run": "npx tsx scripts/cleanup-test-dbs.ts --dry-run",
     "db:verify-cleanup": "npx tsx scripts/verify-db-cleanup.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:eval": "node evals/run.mjs",
     "type-check": "pnpm -r type-check",
     "preview": "pnpm --filter @goferbot/web preview",
     "bump": "node bump-version.cjs",

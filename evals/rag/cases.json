@@ -1,0 +1,28 @@
+{
+  "rubricVersion": "rag-v1",
+  "description": "RAG offline cases — rule anchors only for MVP runner",
+  "cases": [
+    { "id": "r01", "query": "什么是向量检索", "mustIncludeAny": ["向量", "embedding", "相似度"], "expectNotEmpty": true },
+    { "id": "r02", "query": "pgvector 是什么", "mustIncludeAny": ["postgres", "向量", "pgvector"], "expectNotEmpty": true },
+    { "id": "r03", "query": "如何配置知识库", "mustIncludeAny": ["知识库", "文档", "上传"], "expectNotEmpty": true },
+    { "id": "r04", "query": "RRF 融合是什么", "mustIncludeAny": ["融合", "RRF", "排序"], "expectNotEmpty": true },
+    { "id": "r05", "query": "空检索应该怎样", "mustIncludeAny": ["空", "无结果", "strict"], "expectNotEmpty": false },
+    { "id": "r06", "query": "rerank 的作用", "mustIncludeAny": ["重排", "rerank", "相关"], "expectNotEmpty": true },
+    { "id": "r07", "query": "chunk 切分策略", "mustIncludeAny": ["切分", "chunk", "切片"], "expectNotEmpty": true },
+    { "id": "r08", "query": "parent child 检索", "mustIncludeAny": ["parent", "父", "子"], "expectNotEmpty": true },
+    { "id": "r09", "query": "hybrid 检索", "mustIncludeAny": ["混合", "hybrid", "关键词"], "expectNotEmpty": true },
+    { "id": "r10", "query": "Elasticsearch 角色", "mustIncludeAny": ["全文", "ES", "关键词"], "expectNotEmpty": true },
+    { "id": "r11", "query": "MinIO 存什么", "mustIncludeAny": ["对象", "文件", "存储"], "expectNotEmpty": true },
+    { "id": "r12", "query": "SSE 流式响应", "mustIncludeAny": ["流", "SSE", "token"], "expectNotEmpty": true },
+    { "id": "r13", "query": "degraded 含义", "mustIncludeAny": ["降级", "degraded", "依赖"], "expectNotEmpty": true },
+    { "id": "r14", "query": "traceId 用途", "mustIncludeAny": ["追踪", "trace", "观测"], "expectNotEmpty": true },
+    { "id": "r15", "query": "契约成功定义", "mustIncludeAny": ["契约", "完成", "非空"], "expectNotEmpty": true },
+    { "id": "r16", "query": "显式反馈是什么", "mustIncludeAny": ["反馈", "有帮助", "没帮助"], "expectNotEmpty": true },
+    { "id": "r17", "query": "禁止准确率文案", "mustIncludeAny": ["准确率", "在线", "禁用"], "expectNotEmpty": true },
+    { "id": "r18", "query": "Langfuse 可插拔", "mustIncludeAny": ["Langfuse", "可选", "采样"], "expectNotEmpty": true },
+    { "id": "r19", "query": "W2 是什么", "mustIncludeAny": ["ObservabilityTurn", "回合", "摘要"], "expectNotEmpty": true },
+    { "id": "r20", "query": "双时钟 latency postProcess", "mustIncludeAny": ["latency", "postProcess", "可感知"], "expectNotEmpty": true },
+    { "id": "r21", "query": "knowledge.ai 阶段时延", "mustIncludeAny": ["knowledge", "阶段", "耗时"], "expectNotEmpty": true },
+    { "id": "r22", "query": "索引失败指标", "mustIncludeAny": ["索引", "失败", "Document"], "expectNotEmpty": true }
+  ]
+}
