@@ -63,6 +63,8 @@ describe('MenuConfig', () => {
     expect(keys).toContain('modelProviders')
     expect(keys).toContain('moduleSettings')
     expect(keys).toContain('audit')
+    expect(keys).toContain('observabilityRag')
+    expect(keys).toContain('observabilityCompanion')
     expect(keys).not.toContain('login')
     expect(keys).not.toContain('userDetail')
   })
@@ -77,8 +79,25 @@ describe('MenuConfig', () => {
     expect(keys).toContain('modelProviders')
     expect(keys).toContain('moduleSettings')
     expect(keys).toContain('audit')
+    // 默认 admin 测试权限不含 system:metrics，详页不进侧栏
+    expect(keys).not.toContain('observabilityRag')
+    expect(keys).not.toContain('observabilityCompanion')
     expect(keys).not.toContain('login')
     expect(keys).not.toContain('userDetail')
+  })
+
+  it('shows observability menus when user has system:metrics', () => {
+    mockUseAuthStore.mockImplementation(
+      selectUser(['admin'], [
+        'dashboard:read',
+        'system:metrics',
+      ]),
+    )
+    const { result } = renderHook(() => useMenuConfig())
+    const keys = result.current.map((m) => m.key)
+    expect(keys).toContain('dashboard')
+    expect(keys).toContain('observabilityRag')
+    expect(keys).toContain('observabilityCompanion')
   })
 
   it('filters menu by user role (limited access)', () => {
@@ -91,6 +110,8 @@ describe('MenuConfig', () => {
     expect(keys).not.toContain('modelProviders')
     expect(keys).not.toContain('moduleSettings')
     expect(keys).not.toContain('audit')
+    expect(keys).not.toContain('observabilityRag')
+    expect(keys).not.toContain('observabilityCompanion')
   })
 
   it('returns empty menu when user is null', () => {

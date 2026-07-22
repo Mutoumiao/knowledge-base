@@ -49,6 +49,16 @@ export const hubRagSchema = z.object({
   emptyRate: kpiSchema,
   degradedRate: kpiSchema,
   indexFailureCount: kpiSchema,
+  /** W2：Chat e2e P95（排除 cancelled） */
+  p95LatencyMs: kpiSchema.optional(),
+  /** W2：knowledge.ai 阶段 P95 */
+  p95KnowledgeAiMs: kpiSchema.optional(),
+  /** 契约成功率（completed 且非 empty 失败等） */
+  contractSuccessRate: kpiSchema.optional(),
+  /** 显式负反馈率（有反馈样本时） */
+  explicitNegativeRate: kpiSchema.optional(),
+  /** 平均 token（有数据时） */
+  avgTokens: kpiSchema.optional(),
 })
 
 export const hubCompanionSchema = z.object({
@@ -56,6 +66,12 @@ export const hubCompanionSchema = z.object({
   qualityFailRate: kpiSchema,
   safetyHardStopRate: kpiSchema,
   negativeFeedbackRate: kpiSchema,
+  /** W2：generate 节点 P95 */
+  p95GenerateMs: kpiSchema.optional(),
+  /** 平均注入记忆条数 */
+  avgMemoryLoaded: kpiSchema.optional(),
+  /** 平均 token（有数据时） */
+  avgTokens: kpiSchema.optional(),
 })
 
 export const hubInventorySchema = z.object({
@@ -81,6 +97,8 @@ export const dashboardSummaryQuerySchema = z.object({
 
 export const observabilityMetricSchema = z.object({
   key: z.string(),
+  /** 展示名（如 rank / 节点名）；缺省时用 key */
+  label: z.string().optional(),
   status: z.enum([
     'ready',
     'pending_instrumentation',
@@ -90,6 +108,8 @@ export const observabilityMetricSchema = z.object({
   value: z.number().optional(),
   unit: z.string().optional(),
   note: z.string().optional(),
+  /** 外链（如 Langfuse trace） */
+  href: z.string().optional().nullable(),
 })
 
 export const observabilitySectionSchema = z.object({

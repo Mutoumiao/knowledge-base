@@ -100,6 +100,26 @@ export function DashboardView({
                   <Col xs={24} sm={8}>
                     <KpiCard title="索引失败" kpi={data?.rag.indexFailureCount} format="count" />
                   </Col>
+                  {data?.rag.p95LatencyMs && (
+                    <Col xs={24} sm={8}>
+                      <KpiCard
+                        title="Chat e2e P95"
+                        kpi={data.rag.p95LatencyMs}
+                        format="ms"
+                        description="非准确率"
+                      />
+                    </Col>
+                  )}
+                  {data?.rag.contractSuccessRate && (
+                    <Col xs={24} sm={8}>
+                      <KpiCard
+                        title="契约成功率"
+                        kpi={data.rag.contractSuccessRate}
+                        format="ratio"
+                        description="非准确率"
+                      />
+                    </Col>
+                  )}
                 </Row>
               </div>
             </section>
@@ -126,7 +146,12 @@ export function DashboardView({
               <div className="obs-panel__body">
                 <Row gutter={[10, 10]}>
                   <Col xs={24} sm={12}>
-                    <KpiCard title="端到端 P95" kpi={data?.companion.p95LatencyMs} format="ms" />
+                    <KpiCard
+                      title="端到端 P95"
+                      kpi={data?.companion.p95LatencyMs}
+                      format="ms"
+                      description="过程履约，非准确率"
+                    />
                   </Col>
                   <Col xs={24} sm={12}>
                     <KpiCard

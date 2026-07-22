@@ -152,6 +152,41 @@ describe('Admin Dashboard Observability (integration)', () => {
       ],
     })
 
+    // W2 为 turn 级 empty/degraded 真源（不混扫 message.metadata）
+    await prisma.observabilityTurn.createMany({
+      data: [
+        {
+          traceId: `w2-empty-${ts}`,
+          route: 'chat',
+          userId: adminUserId,
+          sessionId: session.id,
+          status: 'ok',
+          latencyMs: 800,
+          flags: { retrievalEmpty: true, contractSuccess: false },
+          spanMs: { 'knowledge.ai': 600 },
+        },
+        {
+          traceId: `w2-degraded-${ts}`,
+          route: 'chat',
+          userId: adminUserId,
+          sessionId: session.id,
+          status: 'ok',
+          latencyMs: 1200,
+          flags: { degraded: true, contractSuccess: true },
+          spanMs: { 'knowledge.ai': 900 },
+        },
+        {
+          traceId: `w2-cancelled-${ts}`,
+          route: 'chat',
+          userId: adminUserId,
+          sessionId: session.id,
+          status: 'cancelled',
+          latencyMs: 99999,
+          flags: {},
+        },
+      ],
+    })
+
     const companion = await prisma.companion.create({
       data: {
         userId: adminUserId,

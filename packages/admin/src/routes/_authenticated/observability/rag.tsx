@@ -29,18 +29,21 @@ function RagObservabilityPage() {
   return (
     <ObservabilityDetailView
       title="RAG 观测"
-      description="索引失败、检索空结果/降级与依赖健康分块"
+      description="索引失败、检索空结果/降级、时延与慢列表（在线指标非「准确率」）"
       data={data ?? undefined}
       loading={loading}
       error={error}
       window={window}
       onWindowChange={setWindow}
       onRefresh={() => void run()}
-      sectionOrder={['index', 'retrieve', 'quality_deps']}
+      variant="rag"
+      sectionOrder={['index', 'retrieve', 'latency', 'slow_turns', 'quality_deps']}
       sectionLabels={{
         index: '索引',
-        retrieve: '检索',
-        quality_deps: '质量依赖',
+        retrieve: '检索质量',
+        latency: '时延分解',
+        slow_turns: '慢请求 Top N',
+        quality_deps: '依赖健康',
       }}
     />
   )

@@ -29,17 +29,20 @@ function CompanionObservabilityPage() {
   return (
     <ObservabilityDetailView
       title="Companion 观测"
-      description="延迟、情绪、质量与安全硬中断（硬中断不出现在聊天记录）"
+      description="过程履约（节点时延/outcome），非准确率；硬中断不出现在聊天记录"
       data={data ?? undefined}
       loading={loading}
       error={error}
       window={window}
       onWindowChange={setWindow}
       onRefresh={() => void run()}
-      sectionOrder={['latency', 'retrieval', 'emotion', 'cost_safety']}
+      variant="companion"
+      sectionOrder={['latency', 'nodes', 'emotion', 'cost_safety', 'slow_turns', 'retrieval']}
       sectionLabels={{
-        latency: '延迟',
-        retrieval: '检索质量',
+        latency: '时延分解',
+        nodes: '节点 P95',
+        slow_turns: '慢请求 Top N',
+        retrieval: '检索（未接入）',
         emotion: '情绪分布',
         cost_safety: '成本与安全',
       }}

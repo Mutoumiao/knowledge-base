@@ -1,9 +1,11 @@
 import {
+  Activity,
   Cpu,
   FileText,
   Heart,
   LayoutDashboard,
   type LucideIcon,
+  Radar,
   Settings as SettingsIcon,
   Shield,
   Ticket,
@@ -133,21 +135,21 @@ export const ROUTES_REGISTER: Record<RouteKey, RouteMeta> = {
     nav: true,
     requiredPermission: PERMISSIONS.COMPANIONS_READ,
   },
-  // 一期不进主导航，仅 Hub 卡片直链 + 权限守卫
+  // 与控制台 Hub 卡片并存；需 system:metrics（详页 KPI / 慢列表）
   observabilityRag: {
     key: 'observabilityRag',
     title: 'RAG 观测',
     path: '/observability/rag' as RoutePath,
-    icon: null,
-    nav: false,
+    icon: Radar,
+    nav: true,
     requiredPermission: PERMISSIONS.SYSTEM_METRICS,
   },
   observabilityCompanion: {
     key: 'observabilityCompanion',
     title: 'Companion 观测',
     path: '/observability/companion' as RoutePath,
-    icon: null,
-    nav: false,
+    icon: Activity,
+    nav: true,
     requiredPermission: PERMISSIONS.SYSTEM_METRICS,
   },
 }

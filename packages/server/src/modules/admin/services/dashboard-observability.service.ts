@@ -1,16 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common'
 import type {
   DashboardSummary,
   HubHealth,
   Kpi,
   ObservabilityDetail,
   ObservabilitySection,
+  ObservabilitySlowTurnItem,
   ObservabilityWindow,
 } from '@goferbot/data'
-import { HealthService } from '../../health/health.service.js'
-import { KnowledgeAiClient } from '../../../processors/knowledge-ai/knowledge-ai.client.js'
+import { Injectable, Logger, Optional } from '@nestjs/common'
 import { PrismaService } from '../../../processors/database/prisma.service.js'
+import { KnowledgeAiClient } from '../../../processors/knowledge-ai/knowledge-ai.client.js'
 import { COMPANION_OBS_SAFETY_HARD_STOP } from '../../companion/repositories/companion-obs-event.repository.js'
+import { HealthService } from '../../health/health.service.js'
+import type { ObservabilityTurnRow } from '../../observability/observability-turn.repository.js'
+import { ObservabilityTurnService } from '../../observability/observability-turn.service.js'
 import {
   buildCountKpi,
   buildP95Kpi,
@@ -47,6 +50,7 @@ export class DashboardObservabilityService {
     private readonly prisma: PrismaService,
     private readonly healthService: HealthService,
     private readonly knowledgeAi: KnowledgeAiClient,
+    @Optional() private readonly obsTurn?: ObservabilityTurnService,
   ) {}
 
   async getSummary(window: ObservabilityWindow = '24h'): Promise<DashboardSummary> {
@@ -70,19 +74,64 @@ export class DashboardObservabilityService {
 
   async getRagDetail(window: ObservabilityWindow = '24h'): Promise<ObservabilityDetail> {
     const since = windowStart(window)
-    const [rag, health] = await Promise.all([this.buildHubRag(since), this.buildHealth()])
+    const [rag, health, slowItems] = await Promise.all([
+      this.buildHubRag(since),
+      this.buildHealth(),
+      this.obsTurn?.listSlowItems('chat', since) ?? Promise.resolve([]),
+    ])
     const kpis: Kpi[] = [
       { key: 'emptyRate', label: '检索空结果率', ...rag.emptyRate },
       { key: 'degradedRate', label: '降级率', ...rag.degradedRate },
       { key: 'indexFailureCount', label: '索引失败数', ...rag.indexFailureCount },
     ]
+    if (rag.p95LatencyMs) {
+      kpis.push({ key: 'p95LatencyMs', label: '端到端 P95（非准确率）', ...rag.p95LatencyMs })
+    }
+    if (rag.contractSuccessRate) {
+      kpis.push({
+        key: 'contractSuccessRate',
+        label: '契约成功率',
+        ...rag.contractSuccessRate,
+        note: '非准确率：完成且非空结果等契约条件',
+      })
+    }
+    if (rag.explicitNegativeRate) {
+      kpis.push({
+        key: 'explicitNegativeRate',
+        label: '显式负反馈率',
+        ...rag.explicitNegativeRate,
+      })
+    }
+    if (rag.avgTokens) {
+      kpis.push({ key: 'avgTokens', label: '平均 Token', ...rag.avgTokens })
+    }
 
-    const retrievePartial = Boolean(rag.emptyRate.partial || rag.degradedRate.partial)
+    const emptyKpi = rag.emptyRate as Kpi
+    const degradedKpi = rag.degradedRate as Kpi
+    const retrievePartial = Boolean(emptyKpi.partial || degradedKpi.partial)
     const retrieveReady =
-      rag.emptyRate.status === 'ready' ||
-      rag.degradedRate.status === 'ready' ||
-      rag.emptyRate.status === 'insufficient_samples' ||
-      rag.degradedRate.status === 'insufficient_samples'
+      emptyKpi.status === 'ready' ||
+      degradedKpi.status === 'ready' ||
+      emptyKpi.status === 'insufficient_samples' ||
+      degradedKpi.status === 'insufficient_samples'
+
+    const p95Lat = rag.p95LatencyMs as Kpi | undefined
+    const p95Ka = rag.p95KnowledgeAiMs as Kpi | undefined
+    const latencyMetrics = [
+      {
+        key: 'p95_e2e_ms',
+        status: p95Lat?.status ?? ('pending_instrumentation' as const),
+        value: p95Lat?.value,
+        unit: 'ms',
+        note: 'W2 latencyMs，排除 cancelled',
+      },
+      {
+        key: 'p95_knowledge_ai_ms',
+        status: p95Ka?.status ?? ('pending_instrumentation' as const),
+        value: p95Ka?.value,
+        unit: 'ms',
+      },
+    ]
 
     const sections: Record<string, ObservabilitySection> = {
       index: {
@@ -98,39 +147,54 @@ export class DashboardObservabilityService {
         note: '口径：Document.status=failed 且 updatedAt 落在时间窗内',
       },
       retrieve: {
-        status: retrieveReady
-          ? retrievePartial
-            ? 'partial'
-            : 'ready'
-          : 'pending_instrumentation',
+        status: retrieveReady ? (retrievePartial ? 'partial' : 'ready') : 'pending_instrumentation',
         metrics: [
           {
             key: 'empty_rate',
-            status: rag.emptyRate.status,
-            value: rag.emptyRate.value,
+            label: '空结果率',
+            status: emptyKpi.status,
+            value: emptyKpi.value,
             unit: 'ratio',
-            note: rag.emptyRate.note,
+            note: emptyKpi.note,
           },
           {
             key: 'degraded_rate',
-            status: rag.degradedRate.status,
-            value: rag.degradedRate.value,
+            label: '降级率',
+            status: degradedKpi.status,
+            value: degradedKpi.value,
             unit: 'ratio',
-            note: rag.degradedRate.note,
+            note: degradedKpi.note,
           },
         ],
       },
+      latency: {
+        status: this.kpiToSectionStatus(
+          (rag.p95LatencyMs as Kpi | undefined) ?? { status: 'pending_instrumentation' },
+        ),
+        metrics: latencyMetrics.map((m) => ({
+          ...m,
+          label:
+            m.key === 'p95_e2e_ms'
+              ? '端到端 P95'
+              : m.key === 'p95_knowledge_ai_ms'
+                ? 'Knowledge AI P95'
+                : m.key,
+        })),
+        note: '在线时延 KPI 不得称为「准确率」',
+      },
+      slow_turns: this.composeSlowTurnsSection(slowItems, 'chat'),
       quality_deps: {
         // ok → ready；degraded/down → partial（不造数，只暴露组件健康）
         status: health.status === 'ok' ? 'ready' : 'partial',
         metrics: health.components.map((c) => ({
           key: c.name,
+          label: c.name,
           status: c.status === 'ok' ? ('ready' as const) : ('partial' as const),
           value: c.latencyMs,
           unit: 'ms',
           note: c.status,
         })),
-        note: '一期不伪造检索瀑布；依赖健康见组件状态',
+        note: '不伪造检索瀑布；依赖健康见组件状态',
       },
     }
 
@@ -145,18 +209,20 @@ export class DashboardObservabilityService {
   async getCompanionDetail(window: ObservabilityWindow = '24h'): Promise<ObservabilityDetail> {
     const since = windowStart(window)
     // 单次 metadata 扫描同时服务 KPI + emotion，避免详页二次全量扫
-    const [metaAgg, feedback, hardStop, userMsgCount] = await Promise.all([
+    const [metaAgg, feedback, hardStop, userMsgCount, w2Rows, slowItems] = await Promise.all([
       this.scanCompanionAssistantMetadata(since),
       this.aggregateFeedback(since),
       this.aggregateHardStops(since),
       this.prisma.companionMessage.count({
         where: { role: 'user', createdAt: { gte: since } },
       }),
+      this.obsTurn?.listByRouteSince('companion', since) ?? Promise.resolve([]),
+      this.obsTurn?.listSlowItems('companion', since) ?? Promise.resolve([]),
     ])
-    const companion = this.composeHubCompanion(metaAgg, feedback, hardStop, userMsgCount)
+    const companion = this.composeHubCompanion(metaAgg, feedback, hardStop, userMsgCount, w2Rows)
 
     const kpis: Kpi[] = [
-      { key: 'p95LatencyMs', label: '端到端 P95', ...companion.p95LatencyMs },
+      { key: 'p95LatencyMs', label: '端到端 P95（履约过程，非准确率）', ...companion.p95LatencyMs },
       {
         key: 'qualityFailRate',
         label: 'Quality fail 率（观测型）',
@@ -166,6 +232,17 @@ export class DashboardObservabilityService {
       { key: 'safetyHardStopRate', label: '安全硬中断率', ...companion.safetyHardStopRate },
       { key: 'negativeFeedbackRate', label: '负反馈率', ...companion.negativeFeedbackRate },
     ]
+    if (companion.p95GenerateMs) {
+      kpis.push({ key: 'p95GenerateMs', label: 'generate 节点 P95', ...companion.p95GenerateMs })
+    }
+    if (companion.avgMemoryLoaded) {
+      kpis.push({ key: 'avgMemoryLoaded', label: '平均注入记忆条数', ...companion.avgMemoryLoaded })
+    }
+    if (companion.avgTokens) {
+      kpis.push({ key: 'avgTokens', label: '平均 Token', ...companion.avgTokens })
+    }
+
+    const nodeP95Metrics = this.buildCompanionNodeP95Metrics(w2Rows)
 
     const sections: Record<string, ObservabilitySection> = {
       latency: {
@@ -176,22 +253,37 @@ export class DashboardObservabilityService {
             status: companion.p95LatencyMs.status,
             value: companion.p95LatencyMs.value,
             unit: 'ms',
+            note: 'W2 优先；排除 cancelled',
+          },
+          {
+            key: 'p95_generate_ms',
+            status: companion.p95GenerateMs?.status ?? 'pending_instrumentation',
+            value: companion.p95GenerateMs?.value,
+            unit: 'ms',
           },
         ],
+      },
+      nodes: {
+        status: nodeP95Metrics.length > 0 ? 'ready' : 'pending_instrumentation',
+        metrics: nodeP95Metrics,
+        note: '有实现的图节点 span；无空壳子 span',
       },
       retrieval: {
         status: 'pending_instrumentation',
         metrics: [],
-        note: 'Companion 主路径一期未接知识检索，不伪造检索质量',
+        note: 'Companion 主路径未接知识检索，不伪造检索质量',
       },
       emotion: this.composeEmotionSection(metaAgg),
+      slow_turns: this.composeSlowTurnsSection(slowItems, 'companion'),
       cost_safety: {
         status: this.composeCostSafetySectionStatus(companion),
         metrics: [
           {
             key: 'token_cost',
-            status: 'pending_instrumentation',
-            note: '一期无 token 成本埋点',
+            status: (companion.avgTokens as Kpi | undefined)?.status ?? 'pending_instrumentation',
+            value: (companion.avgTokens as Kpi | undefined)?.value,
+            unit: (companion.avgTokens as Kpi | undefined)?.unit,
+            note: (companion.avgTokens as Kpi | undefined)?.note ?? '有 token 数据时展示',
           },
           {
             key: 'quality_fail_rate',
@@ -224,6 +316,37 @@ export class DashboardObservabilityService {
       kpis,
       sections,
     }
+  }
+
+  private buildCompanionNodeP95Metrics(
+    rows: ObservabilityTurnRow[],
+  ): Array<{ key: string; label: string; status: 'ready'; value: number; unit: string }> {
+    const byNode: Record<string, number[]> = {}
+    for (const r of rows) {
+      if (r.status === 'cancelled') continue
+      const span = parseJsonObject(r.spanMs)
+      if (!span) continue
+      for (const [k, v] of Object.entries(span)) {
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          if (!byNode[k]) byNode[k] = []
+          byNode[k].push(v)
+        }
+      }
+    }
+    return Object.entries(byNode)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, vals]) => {
+        const sorted = vals.slice().sort((a, b) => a - b)
+        const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))
+        const value = sorted[idx] ?? 0
+        return {
+          key: `node_${key}_p95`,
+          label: key,
+          status: 'ready' as const,
+          value,
+          unit: 'ms',
+        }
+      })
   }
 
   // ── health ──────────────────────────────────────────────
@@ -310,99 +433,111 @@ export class DashboardObservabilityService {
       },
     })
 
-    const chatAgg = await this.scanChatAssistantMetadata(since)
+    // 优先 W2；无样本时 empty/degraded 不混扫消息表冒充 turn 指标（索引失败仍读 Document）
+    const w2Rows = this.obsTurn ? await this.obsTurn.listByRouteSince('chat', since) : []
+    if (w2Rows.length > 0) {
+      return this.composeHubRagFromW2(w2Rows, indexFailureCount)
+    }
 
+    // 无 W2：empty/degraded 标 pending_instrumentation（不混扫）；索引仍可用
     return {
-      emptyRate: buildRateKpi({
-        numerator: chatAgg.emptyCount,
-        denominator: chatAgg.total,
-        instrumented: true,
-        partial: chatAgg.partial,
-        note: chatAgg.partial ? '样本达扫描上限，结果为 partial' : undefined,
-      }),
-      degradedRate: buildRateKpi({
-        numerator: chatAgg.degradedCount,
-        denominator: chatAgg.total,
-        instrumented: chatAgg.degradedInstrumented,
-        partial: chatAgg.partial,
-        note: chatAgg.degradedInstrumented
-          ? chatAgg.partial
-            ? '样本达扫描上限，结果为 partial'
-            : undefined
-          : 'Chat metadata.degraded 尚未出现样本（管线写入后自动 ready）',
-      }),
+      emptyRate: {
+        status: 'pending_instrumentation' as const,
+        note: '等待 W2 ObservabilityTurn 样本（不混扫消息 metadata 冒充）',
+      },
+      degradedRate: {
+        status: 'pending_instrumentation' as const,
+        note: '等待 W2 ObservabilityTurn 样本',
+      },
       indexFailureCount: buildCountKpi(indexFailureCount),
+      p95LatencyMs: { status: 'pending_instrumentation' as const },
+      p95KnowledgeAiMs: { status: 'pending_instrumentation' as const },
+      contractSuccessRate: { status: 'pending_instrumentation' as const },
+      explicitNegativeRate: { status: 'pending_instrumentation' as const },
+      avgTokens: { status: 'pending_instrumentation' as const },
     }
   }
 
-  private async scanChatAssistantMetadata(since: Date): Promise<{
-    total: number
-    emptyCount: number
-    degradedCount: number
-    degradedInstrumented: boolean
-    partial: boolean
-  }> {
-    type ScanResult = {
-      total: number
-      emptyCount: number
-      degradedCount: number
-      degradedInstrumented: boolean
-      partial: boolean
+  private composeHubRagFromW2(rows: ObservabilityTurnRow[], indexFailureCount: number) {
+    const nonCancelled = rows.filter((r) => r.status !== 'cancelled')
+    const latencies = nonCancelled.map((r) => r.latencyMs)
+    const kaMs: number[] = []
+    let emptyCount = 0
+    let degradedCount = 0
+    let contractOk = 0
+    let contractDenom = 0
+    let explicitNeg = 0
+    let explicitTotal = 0
+    let tokenSum = 0
+    let tokenSamples = 0
+
+    for (const r of nonCancelled) {
+      const flags = parseJsonObject(r.flags) ?? {}
+      if (isTruthyFlag(flags, 'retrievalEmpty') || flags.retrievalEmpty === true) emptyCount += 1
+      if (isTruthyFlag(flags, 'degraded') || flags.degraded === true) degradedCount += 1
+      if (r.status === 'ok') {
+        contractDenom += 1
+        if (flags.contractSuccess === true) contractOk += 1
+      }
+      if (flags.explicitFeedback === 'helpful' || flags.explicitFeedback === 'not_helpful') {
+        explicitTotal += 1
+        if (flags.explicitFeedback === 'not_helpful') explicitNeg += 1
+      }
+      const span = parseJsonObject(r.spanMs)
+      const ka = span ? readNumberField(span, 'knowledge.ai') : null
+      if (ka != null) kaMs.push(ka)
+      const it = r.inputTokens ?? 0
+      const ot = r.outputTokens ?? 0
+      if (r.inputTokens != null || r.outputTokens != null) {
+        tokenSum += it + ot
+        tokenSamples += 1
+      }
     }
-    return this.withTimeout<ScanResult>(
-      async () => {
-        const rows = await this.prisma.message.findMany({
-          where: {
-            role: 'assistant',
-            createdAt: { gte: since },
-            status: 'completed',
-          },
-          select: { metadata: true },
-          orderBy: { createdAt: 'desc' },
-          take: this.scanLimit,
-        })
 
-        // 是否窗内还有更多（partial）
-        const totalInWindow = await this.prisma.message.count({
-          where: {
-            role: 'assistant',
-            createdAt: { gte: since },
-            status: 'completed',
-          },
-        })
-
-        let emptyCount = 0
-        let degradedCount = 0
-
-        for (const row of rows) {
-          const meta = parseJsonObject(row.metadata)
-          if (isTruthyFlag(meta, 'retrieval_empty')) emptyCount += 1
-          if (isTruthyFlag(meta, 'degraded')) degradedCount += 1
-        }
-
-        return {
-          total: rows.length,
-          emptyCount,
-          degradedCount,
-          // Chat 定稿路径已支持 metadata.degraded；有样本即可按 ready/insufficient 评估
-          degradedInstrumented: true,
-          partial: totalInWindow > rows.length,
-        }
-      },
-      {
-        total: 0,
-        emptyCount: 0,
-        degradedCount: 0,
-        degradedInstrumented: false,
-        partial: true,
-      },
-    )
+    return {
+      emptyRate: buildRateKpi({
+        numerator: emptyCount,
+        denominator: nonCancelled.length,
+        instrumented: true,
+        note: 'W2 flags.retrievalEmpty',
+      }),
+      degradedRate: buildRateKpi({
+        numerator: degradedCount,
+        denominator: nonCancelled.length,
+        instrumented: true,
+        note: 'W2 flags.degraded',
+      }),
+      indexFailureCount: buildCountKpi(indexFailureCount),
+      p95LatencyMs: buildP95Kpi(latencies, true),
+      p95KnowledgeAiMs: buildP95Kpi(kaMs, kaMs.length > 0 || nonCancelled.length > 0),
+      contractSuccessRate: buildRateKpi({
+        numerator: contractOk,
+        denominator: contractDenom,
+        instrumented: true,
+        note: '契约成功，非准确率',
+      }),
+      explicitNegativeRate: buildRateKpi({
+        numerator: explicitNeg,
+        denominator: explicitTotal,
+        instrumented: true,
+        note: explicitTotal === 0 ? '尚无显式反馈样本' : 'not_helpful / 有反馈回合',
+      }),
+      avgTokens:
+        tokenSamples > 0
+          ? {
+              status: 'ready' as const,
+              value: tokenSum / tokenSamples,
+              sampleSize: tokenSamples,
+              unit: 'tokens',
+            }
+          : { status: 'pending_instrumentation' as const, note: '尚无 token 埋点' },
+    }
   }
 
   // ── Companion hub ───────────────────────────────────────
 
   private async buildHubCompanion(since: Date) {
-    const [metaAgg, feedback, hardStop, userMsgCount] = await Promise.all([
+    const [metaAgg, feedback, hardStop, userMsgCount, w2Rows] = await Promise.all([
       this.scanCompanionAssistantMetadata(since),
       this.aggregateFeedback(since),
       this.aggregateHardStops(since),
@@ -412,8 +547,9 @@ export class DashboardObservabilityService {
           createdAt: { gte: since },
         },
       }),
+      this.obsTurn?.listByRouteSince('companion', since) ?? Promise.resolve([]),
     ])
-    return this.composeHubCompanion(metaAgg, feedback, hardStop, userMsgCount)
+    return this.composeHubCompanion(metaAgg, feedback, hardStop, userMsgCount, w2Rows)
   }
 
   private composeHubCompanion(
@@ -421,13 +557,58 @@ export class DashboardObservabilityService {
     feedback: { negative: number; total: number },
     hardStop: { count: number; instrumented: boolean },
     userMsgCount: number,
+    w2Rows: ObservabilityTurnRow[] = [],
   ) {
+    const w2NonCancel = w2Rows.filter((r) => r.status !== 'cancelled')
+    const w2Latencies = w2NonCancel.map((r) => r.latencyMs)
+    const genMs: number[] = []
+    let memSum = 0
+    let memN = 0
+    let tokenSum = 0
+    let tokenN = 0
+    for (const r of w2NonCancel) {
+      const span = parseJsonObject(r.spanMs)
+      const g = span ? readNumberField(span, 'generate') : null
+      if (g != null) genMs.push(g)
+      const attrs = parseJsonObject(r.spanAttrs)
+      const ml = attrs ? readNumberField(attrs, 'memoryLoaded') : null
+      if (ml != null) {
+        memSum += ml
+        memN += 1
+      }
+      if (r.inputTokens != null || r.outputTokens != null) {
+        tokenSum += (r.inputTokens ?? 0) + (r.outputTokens ?? 0)
+        tokenN += 1
+      }
+    }
+
+    // e2e：W2 优先（真源）；否则 fallback 消息 metadata
+    const p95LatencyMs =
+      w2Latencies.length > 0
+        ? buildP95Kpi(w2Latencies, true)
+        : buildP95Kpi(metaAgg.latencies, metaAgg.latencyInstrumented, metaAgg.partial)
+
     return {
-      p95LatencyMs: buildP95Kpi(
-        metaAgg.latencies,
-        metaAgg.latencyInstrumented,
-        metaAgg.partial,
-      ),
+      p95LatencyMs,
+      p95GenerateMs: buildP95Kpi(genMs, genMs.length > 0 || w2NonCancel.length > 0),
+      avgMemoryLoaded:
+        memN > 0
+          ? {
+              status: 'ready' as const,
+              value: memSum / memN,
+              sampleSize: memN,
+              unit: 'count',
+            }
+          : { status: 'pending_instrumentation' as const },
+      avgTokens:
+        tokenN > 0
+          ? {
+              status: 'ready' as const,
+              value: tokenSum / tokenN,
+              sampleSize: tokenN,
+              unit: 'tokens',
+            }
+          : { status: 'pending_instrumentation' as const },
       qualityFailRate: buildRateKpi({
         numerator: metaAgg.qualityFailCount,
         denominator: metaAgg.qualitySampleCount,
@@ -473,6 +654,7 @@ export class DashboardObservabilityService {
       .slice(0, 8)
       .map(([key, value]) => ({
         key,
+        label: key,
         status: 'ready' as const,
         value,
         unit: 'count',
@@ -482,6 +664,54 @@ export class DashboardObservabilityService {
       status: metaAgg.partial ? 'partial' : 'ready',
       metrics,
       note: `基于 ${metaAgg.emotionSampleCount} 条含 emotion 的助手消息`,
+    }
+  }
+
+  /**
+   * 慢请求 Top N：metrics 每行一条回合，禁止把整表 JSON 塞进 note（前端会原样渲染）。
+   */
+  private composeSlowTurnsSection(
+    slowItems: ObservabilitySlowTurnItem[],
+    route: 'chat' | 'companion',
+  ): ObservabilitySection {
+    if (slowItems.length === 0) {
+      return {
+        status: 'pending_instrumentation',
+        metrics: [],
+        note:
+          route === 'chat'
+            ? '暂无 W2 慢样本（未埋点或窗内无数据）'
+            : '暂无 W2 慢样本',
+      }
+    }
+
+    const topN = Number(process.env.OBS_SLOW_TOP_N ?? '20')
+    return {
+      status: 'ready',
+      metrics: slowItems.map((s, i) => {
+        const linkId =
+          route === 'chat' ? s.sessionId : s.conversationId
+        const parts = [
+          s.status,
+          s.createdAt,
+          linkId
+            ? route === 'chat'
+              ? `session=${linkId}`
+              : `conversation=${linkId}`
+            : null,
+          s.messageId ? `message=${s.messageId}` : null,
+        ].filter(Boolean)
+        return {
+          key: s.traceId,
+          label: `#${i + 1}`,
+          status: 'ready' as const,
+          value: s.latencyMs,
+          unit: 'ms',
+          note: parts.join(' · '),
+          href: s.langfuseUrl ?? null,
+        }
+      }),
+      note: `窗口内最慢 ${slowItems.length} 条（Top ${topN}，排除 cancelled）。key 为 traceId；配置 LANGFUSE_HOST 时可用外链。`,
     }
   }
 
@@ -499,8 +729,7 @@ export class DashboardObservabilityService {
       companion.safetyHardStopRate.status === 'pending_instrumentation' &&
       companion.qualityFailRate.status === 'pending_instrumentation'
     if (bothPending) return 'pending_instrumentation'
-    const partial =
-      companion.safetyHardStopRate.partial || companion.qualityFailRate.partial
+    const partial = companion.safetyHardStopRate.partial || companion.qualityFailRate.partial
     return partial ? 'partial' : 'ready'
   }
 
@@ -583,9 +812,7 @@ export class DashboardObservabilityService {
     return { negative, total }
   }
 
-  private async aggregateHardStops(
-    since: Date,
-  ): Promise<{ count: number; instrumented: boolean }> {
+  private async aggregateHardStops(since: Date): Promise<{ count: number; instrumented: boolean }> {
     try {
       // 表存在即可 instrumented（即便 count=0）
       const count = await this.prisma.companionObsEvent.count({
@@ -626,4 +853,3 @@ export class DashboardObservabilityService {
     }
   }
 }
-
