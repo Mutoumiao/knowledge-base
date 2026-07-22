@@ -1,6 +1,7 @@
 import { Runnable } from '@langchain/core/runnables'
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common'
 import { LlmConfigService } from '../config/llm-config.service.js'
+import { companionTokenCallbacks } from './token-usage.js'
 import type { StructuredOutputMethod, StructuredOutputOptions, WireApi } from './types.js'
 
 @Injectable()
@@ -22,6 +23,7 @@ export class StructuredOutputService {
   ): Promise<T> {
     const methods = this.getMethods()
     let lastError: unknown = null
+    const callbacks = companionTokenCallbacks()
 
     for (const method of methods) {
       try {
@@ -32,12 +34,12 @@ export class StructuredOutputService {
         })
 
         if (typeof prompt === 'string') {
-          const result = await structuredModel.invoke(prompt, { signal })
+          const result = await structuredModel.invoke(prompt, { signal, callbacks })
           return options.schema.parse(result)
         }
 
         const chain = prompt.pipe(structuredModel)
-        const result = await chain.invoke({}, { signal })
+        const result = await chain.invoke({}, { signal, callbacks })
         return options.schema.parse(result)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'unknown'

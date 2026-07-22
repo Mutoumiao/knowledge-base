@@ -1,5 +1,7 @@
+import { chatMessageFeedbackRequestSchema } from '@goferbot/data'
 import { Body, Controller, Get, Logger, Post, Query, Req, Res, UseGuards } from '@nestjs/common'
 import type { FastifyReply, FastifyRequest } from 'fastify'
+import { createZodDto } from 'nestjs-zod'
 import { CurrentUser } from '../../auth/decorators/current-user.decorator.js'
 import { JwtAuthGuard } from '../../auth/guards/jwt.guard.js'
 import { BypassResponse } from '../../common/decorators/bypass-response.decorator.js'
@@ -8,6 +10,8 @@ import { ChatService } from './chat.service.js'
 import { ConversationService } from './conversation.service.js'
 import { ChatMessagesDto, MessageListQueryDto } from './dto/chat.dto.js'
 import { ModelRegistryService } from './model-registry.service.js'
+
+class ChatMessageFeedbackDto extends createZodDto(chatMessageFeedbackRequestSchema) {}
 
 @Controller('chat-messages')
 @UseGuards(JwtAuthGuard)
@@ -91,5 +95,11 @@ export class ChatController {
   @Get('providers')
   async providers() {
     return { providers: this.modelRegistry.list() }
+  }
+
+  /** 知识库问答显式反馈 CTA */
+  @Post('feedback')
+  async feedback(@CurrentUser('id') userId: string, @Body() dto: ChatMessageFeedbackDto) {
+    return this.chatService.submitFeedback(userId, dto)
   }
 }

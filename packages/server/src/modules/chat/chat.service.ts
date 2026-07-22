@@ -1,11 +1,22 @@
 import { randomUUID } from 'node:crypto'
 import type { ChatMessagesChunk } from '@goferbot/data'
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common'
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common'
 import { StreamFinalizeService } from '../../common/services/stream-finalize.service.js'
 import { KnowledgeAiClient } from '../../processors/knowledge-ai/knowledge-ai.client.js'
 import { KnowledgeAiProviderResolver } from '../../processors/knowledge-ai/knowledge-ai.provider-resolver.js'
 import type { KnowledgeAiSourceItem } from '../../processors/knowledge-ai/knowledge-ai.types.js'
 import { KbRepository } from '../knowledge-base/repositories/kb.repository.js'
+import {
+  detectUserRejected,
+  isImplicitRejectEnabledForChat,
+} from '../observability/implicit-reject.js'
+import { ObservabilityTurnService } from '../observability/observability-turn.service.js'
 import { MODEL_PROVIDER_ERROR_CODES } from '../settings/constants.js'
 import type { ModelProvider } from '../settings/dto/settings.dto.js'
 import { parseModelKey } from '../settings/model-provider.service.js'
@@ -35,6 +46,7 @@ export class ChatService {
     private readonly knowledgeAi: KnowledgeAiClient,
     private readonly kbRepository: KbRepository,
     private readonly knowledgeAiProviderResolver: KnowledgeAiProviderResolver,
+    @Optional() private readonly obsTurn?: ObservabilityTurnService,
   ) {}
 
   async validateChatAccess(userId: string, dto: ChatMessagesDto): Promise<void> {
@@ -89,6 +101,9 @@ export class ChatService {
       beforeMessageId: dto.parent_message_id ?? undefined,
     })
 
+    // 隐式拒绝：相对上一轮助手异步打标（不阻断本轮）
+    void this.markUserRejectedIfNeeded(sessionId, input).catch(() => undefined)
+
     await this.conversationService.saveUserMessage(sessionId, input)
 
     // Assistant placeholder (streaming)
@@ -103,21 +118,86 @@ export class ChatService {
       .map((m) => ({ role: m.role, content: m.content }))
 
     const mode = dto.retrieval_mode ?? retrievalMode ?? 'strict'
+    // 观测主键：服务端生成，不信任浏览器 x-trace-id
     const traceId = randomUUID()
+    const turnStartedAt = Date.now()
     let fullReply = ''
     let sources: KnowledgeAiSourceItem[] = []
     let retrievalEmpty = false
     let degraded = false
     let terminalStatus: 'completed' | 'cancelled' | 'failed' = 'completed'
+    let knowledgeAiMs: number | undefined
+    let inputTokens: number | undefined
+    let outputTokens: number | undefined
 
     const buildChatMetadata = (extra?: Record<string, unknown>) => ({
       sources,
       retrieval_empty: retrievalEmpty,
       ...(degraded ? { degraded: true } : {}),
+      ...(typeof knowledgeAiMs === 'number' ? { knowledge_ai_ms: knowledgeAiMs } : {}),
       ...extra,
     })
 
+    const obsStatus = (): 'ok' | 'error' | 'cancelled' => {
+      if (terminalStatus === 'cancelled') return 'cancelled'
+      if (terminalStatus === 'failed') return 'error'
+      return 'ok'
+    }
+
+    const writeObs = (opts?: {
+      postProcessMs?: number
+      full?: boolean
+      /** Z3：冻结后的 e2e 时延；缺省则按当前时刻计算（仅错误早退路径） */
+      latencyMs?: number
+    }) => {
+      const obs = this.obsTurn
+      if (!obs) return
+      const latencyMs = opts?.latencyMs ?? Date.now() - turnStartedAt
+      const contractSuccess =
+        terminalStatus === 'completed' && !retrievalEmpty && fullReply.trim().length > 0
+      const flags = {
+        retrievalEmpty,
+        degraded: degraded || undefined,
+        contractSuccess: terminalStatus === 'completed' ? contractSuccess : undefined,
+      }
+      const spanMs: Record<string, number> = {}
+      if (typeof knowledgeAiMs === 'number') spanMs['knowledge.ai'] = knowledgeAiMs
+
+      const run = async () => {
+        if (opts?.full === false) {
+          await obs.recordMinimal({
+            traceId,
+            route: 'chat',
+            status: obsStatus(),
+            latencyMs,
+            userId,
+            sessionId,
+            messageId,
+          })
+          return
+        }
+        await obs.recordTurn({
+          traceId,
+          route: 'chat',
+          userId,
+          sessionId,
+          messageId,
+          status: obsStatus(),
+          latencyMs,
+          postProcessMs: opts?.postProcessMs,
+          flags,
+          spanMs: Object.keys(spanMs).length ? spanMs : undefined,
+          inputTokens,
+          outputTokens,
+        })
+      }
+      void run().catch((err) =>
+        this.logger.warn(`obs write failed: ${err instanceof Error ? err.message : String(err)}`),
+      )
+    }
+
     try {
+      const kaStarted = Date.now()
       for await (const frame of this.knowledgeAi.stream(
         {
           query: input,
@@ -174,14 +254,23 @@ export class ChatService {
           }
           retrievalEmpty = Boolean(frame.data.retrieval_empty) || retrievalEmpty
           degraded = Boolean(frame.data.degraded) || degraded
+          const usage = (
+            frame.data as { usage?: { input_tokens?: number; output_tokens?: number } }
+          ).usage
+          if (usage) {
+            if (typeof usage.input_tokens === 'number') inputTokens = usage.input_tokens
+            if (typeof usage.output_tokens === 'number') outputTokens = usage.output_tokens
+          }
         } else if (frame.event === 'error') {
           terminalStatus = 'failed'
+          knowledgeAiMs = Date.now() - kaStarted
           const errMsg = frame.data.message || frame.data.error || '知识问答失败'
           await this.conversationService.updateAssistantMessage(sessionId, messageId, {
             content: fullReply,
             status: 'failed',
-            metadata: buildChatMetadata({ error: errMsg }),
+            metadata: buildChatMetadata({ error: errMsg, latencyMs: Date.now() - turnStartedAt }),
           })
+          writeObs({ full: false })
           yield {
             event: 'error',
             conversation_id: sessionId,
@@ -193,35 +282,38 @@ export class ChatService {
           return
         }
       }
+      knowledgeAiMs = Date.now() - kaStarted
     } catch (err: unknown) {
+      knowledgeAiMs = knowledgeAiMs ?? Date.now() - turnStartedAt
       if (err instanceof Error && err.name === 'AbortError') {
         terminalStatus = abortController.signal.aborted ? 'cancelled' : 'failed'
         await this.conversationService.updateAssistantMessage(sessionId, messageId, {
           content: fullReply,
           status: terminalStatus,
-          metadata: buildChatMetadata(),
+          metadata: buildChatMetadata({ latencyMs: Date.now() - turnStartedAt }),
         })
+        writeObs({ full: terminalStatus === 'cancelled' })
         yield {
-          event: terminalStatus === 'cancelled' ? 'error' : 'error',
+          event: 'error',
           conversation_id: sessionId,
           message_id: messageId,
           answer: '',
           done: true,
           error:
-            terminalStatus === 'cancelled'
-              ? '已取消'
-              : `知识问答超时（${timeoutMs / 1000} 秒）`,
+            terminalStatus === 'cancelled' ? '已取消' : `知识问答超时（${timeoutMs / 1000} 秒）`,
         }
         return
       }
       this.logger.error(
         `Knowledge AI 流异常 sessionId=${sessionId}: ${err instanceof Error ? err.message : '未知错误'}`,
       )
+      terminalStatus = 'failed'
       await this.conversationService.updateAssistantMessage(sessionId, messageId, {
         content: fullReply,
         status: 'failed',
-        metadata: buildChatMetadata(),
+        metadata: buildChatMetadata({ latencyMs: Date.now() - turnStartedAt }),
       })
+      writeObs({ full: false })
       yield {
         event: 'error',
         conversation_id: sessionId,
@@ -234,11 +326,13 @@ export class ChatService {
     }
 
     if (abortController.signal.aborted || terminalStatus === 'cancelled') {
+      terminalStatus = 'cancelled'
       await this.conversationService.updateAssistantMessage(sessionId, messageId, {
         content: fullReply,
         status: 'cancelled',
-        metadata: buildChatMetadata(),
+        metadata: buildChatMetadata({ latencyMs: Date.now() - turnStartedAt }),
       })
+      writeObs()
       yield {
         event: 'error',
         conversation_id: sessionId,
@@ -250,20 +344,50 @@ export class ChatService {
       return
     }
 
+    // Z3：e2e 在用户可感知完成时冻结；postProcess 单独计量
+    const latencyMs = Date.now() - turnStartedAt
     // completed (including strict empty retrieval)
     await this.conversationService.updateAssistantMessage(sessionId, messageId, {
       content: fullReply,
       status: 'completed',
-      metadata: buildChatMetadata(),
+      metadata: buildChatMetadata({ latencyMs, obs_trace_id: traceId }),
     })
 
+    const postStarted = Date.now()
     this.finalizeService.schedule({ userId, sessionId, span: 'chat.stream.finalize' }, [
       {
         name: 'generate-title',
-        run: () =>
-          this.conversationService.generateTitle(sessionId, input, fullReply, llmProvider),
+        run: () => this.conversationService.generateTitle(sessionId, input, fullReply, llmProvider),
+      },
+      {
+        name: 'obs-w2',
+        run: async () => {
+          if (!this.obsTurn) return
+          await this.obsTurn.recordTurn({
+            traceId,
+            route: 'chat',
+            userId,
+            sessionId,
+            messageId,
+            status: 'ok',
+            latencyMs,
+            postProcessMs: Date.now() - postStarted,
+            flags: {
+              retrievalEmpty,
+              degraded: degraded || undefined,
+              contractSuccess: !retrievalEmpty && fullReply.trim().length > 0,
+            },
+            spanMs:
+              typeof knowledgeAiMs === 'number' ? { 'knowledge.ai': knowledgeAiMs } : undefined,
+            inputTokens,
+            outputTokens,
+          })
+        },
       },
     ])
+
+    // 用户可感知完成后立刻记一版 W2（postProcess 在 finalize 覆盖）
+    writeObs({ latencyMs })
 
     yield {
       event: 'message_end',
@@ -272,6 +396,72 @@ export class ChatService {
       answer: '',
       done: true,
       retrieval_empty: retrievalEmpty,
+    }
+  }
+
+  /**
+   * Chat 显式反馈：回写消息 metadata + W2 flags
+   */
+  async submitFeedback(
+    userId: string,
+    input: {
+      messageId: string
+      sessionId: string
+      rating: 'helpful' | 'not_helpful'
+      reason?: string
+      traceId?: string
+    },
+  ): Promise<{ ok: true; messageId: string; rating: 'helpful' | 'not_helpful' }> {
+    await this.conversationService.ensureOwnership(userId, input.sessionId)
+    const msg = await this.conversationService.getMessage(input.sessionId, input.messageId)
+    if (msg?.role !== 'assistant') {
+      throw new NotFoundException({ code: 'NOT_FOUND', message: '消息不存在' })
+    }
+    const prev =
+      msg.metadata && typeof msg.metadata === 'object' && !Array.isArray(msg.metadata)
+        ? (msg.metadata as Record<string, unknown>)
+        : {}
+    const nextMeta = {
+      ...prev,
+      explicit_feedback: input.rating,
+      ...(input.reason ? { explicit_feedback_reason: input.reason } : {}),
+    }
+    await this.conversationService.updateAssistantMessage(input.sessionId, input.messageId, {
+      metadata: nextMeta,
+    })
+
+    const traceId =
+      input.traceId || (typeof prev.obs_trace_id === 'string' ? prev.obs_trace_id : undefined)
+    if (traceId && this.obsTurn) {
+      await this.obsTurn.patchFlags(traceId, {
+        explicitFeedback: input.rating,
+        ...(input.reason ? { explicitFeedbackReason: input.reason } : {}),
+      })
+    }
+
+    return { ok: true, messageId: input.messageId, rating: input.rating }
+  }
+
+  /**
+   * 隐式拒绝：对上一轮助手 trace 打 userRejected（异步，不阻断）
+   */
+  async markUserRejectedIfNeeded(sessionId: string, userText: string): Promise<void> {
+    if (!isImplicitRejectEnabledForChat() || !detectUserRejected(userText) || !this.obsTurn) {
+      return
+    }
+    const history = await this.conversationService.loadRecentMessages(sessionId, 8)
+    for (let i = history.length - 1; i >= 0; i--) {
+      const m = history[i]
+      if (m.role !== 'assistant') continue
+      const meta =
+        m.metadata && typeof m.metadata === 'object' && !Array.isArray(m.metadata)
+          ? (m.metadata as Record<string, unknown>)
+          : null
+      const tid = meta && typeof meta.obs_trace_id === 'string' ? meta.obs_trace_id : null
+      if (tid) {
+        await this.obsTurn.patchFlags(tid, { userRejected: true })
+      }
+      break
     }
   }
 

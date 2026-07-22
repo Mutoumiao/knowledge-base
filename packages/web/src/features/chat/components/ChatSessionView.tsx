@@ -11,6 +11,7 @@ import { getMessageSources, getRetrievalEmpty, textFromUiMessage } from '../mess
 import { fetchProviders } from '../services'
 import { useChatStore } from '../store'
 import { ChatComposer } from './ChatComposer'
+import { MessageFeedbackCta } from './MessageFeedbackCta'
 import { SourceCitations, SourceDocsFloatingPanel } from './SourceCitations'
 
 function retryFetchProviders() {
@@ -174,6 +175,14 @@ export function ChatSessionView({
                             hasNextChunk: streamingThis,
                           }}
                         />
+                        {/* 仅知识库问答 CTA；Companion 无此组件 */}
+                        {!streamingThis && content.trim() && conversationId && msg.id && (
+                          <MessageFeedbackCta
+                            messageId={msg.id}
+                            sessionId={conversationId}
+                            disabled={isStreaming}
+                          />
+                        )}
                       </div>
                     )}
                   </div>

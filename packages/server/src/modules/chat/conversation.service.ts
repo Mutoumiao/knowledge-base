@@ -84,6 +84,27 @@ export class ConversationService {
     })
   }
 
+  async getMessage(sessionId: string, messageId: string): Promise<Message | null> {
+    const existing = await this.messageRepository.findById(messageId)
+    if (!existing || existing.sessionId !== sessionId) return null
+    return existing
+  }
+
+  /**
+   * 最近消息（含 metadata），供观测隐式拒绝等使用
+   */
+  async loadRecentMessages(
+    sessionId: string,
+    limit = 10,
+  ): Promise<Array<{ role: string; content: string; metadata: unknown }>> {
+    const messages = await this.messageRepository.findBySessionId(sessionId)
+    return messages.slice(-limit).map((m) => ({
+      role: m.role,
+      content: m.content,
+      metadata: m.metadata,
+    }))
+  }
+
   async loadHistory(
     sessionId: string,
     options?: { beforeMessageId?: string },

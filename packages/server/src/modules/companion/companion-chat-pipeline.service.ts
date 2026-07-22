@@ -7,6 +7,7 @@ import {
 } from './langchain/constants.js'
 import { CompanionGraphService } from './langgraph/graph.js'
 import type { CompanionState, NodeExecutionContext } from './langgraph/interfaces.js'
+import { SharedNodeFactory } from './langgraph/nodes/_shared.js'
 import { CompanionRepository } from './repositories/companion.repository.js'
 import { CompanionConversationRepository } from './repositories/companion-conversation.repository.js'
 import { CompanionFeedbackRepository } from './repositories/companion-feedback.repository.js'
@@ -25,6 +26,7 @@ export class CompanionChatPipelineService {
     private readonly memoryRepo: CompanionMemoryRepository,
     private readonly feedbackRepo: CompanionFeedbackRepository,
     private readonly companionService: CompanionService,
+    private readonly shared: SharedNodeFactory,
   ) {}
 
   async prepareContext(params: {
@@ -92,12 +94,22 @@ export class CompanionChatPipelineService {
       conversationId: conversation.id,
       userMessage: params.message,
       messageCount: afterUser.messageCount,
-      existingMemories: memories.map((m) => ({
-        id: m.id,
-        type: m.type,
-        content: m.content,
-        importance: m.importance,
-      })),
+      // 注入前去噪：过滤历史探针/问句残片，避免旧污染进入 prompt
+      existingMemories: this.shared
+        .filterInjectableMemories(
+          memories.map((m) => ({
+            id: m.id,
+            type: m.type,
+            content: m.content,
+            importance: m.importance,
+          })),
+        )
+        .map((m) => ({
+          id: m.id,
+          type: m.type,
+          content: m.content,
+          importance: m.importance,
+        })),
       recentMessages: recentMessages.map((m) => ({
         id: m.id,
         role: m.role as 'user' | 'assistant',
@@ -134,17 +146,28 @@ export class CompanionChatPipelineService {
     patch: Partial<CompanionState>
     safetyBlocked: boolean
     safetyReason: string
+    node?: string
+    nodeMs?: number
   }> {
-    for await (const { patch } of this.graphService.stream(initialState, ctx)) {
+    let stepStarted = Date.now()
+    for await (const { node, patch } of this.graphService.stream(initialState, ctx)) {
+      const nodeMs = Date.now() - stepStarted
+      stepStarted = Date.now()
       if (
         patch.safety?.boundaryAction === 'refuse' ||
         patch.safety?.boundaryAction === 'crisis_support'
       ) {
-        yield { patch, safetyBlocked: true, safetyReason: patch.safety.reason }
+        yield {
+          patch,
+          safetyBlocked: true,
+          safetyReason: patch.safety.reason,
+          node,
+          nodeMs,
+        }
         break
       }
 
-      yield { patch, safetyBlocked: false, safetyReason: '' }
+      yield { patch, safetyBlocked: false, safetyReason: '', node, nodeMs }
     }
   }
 

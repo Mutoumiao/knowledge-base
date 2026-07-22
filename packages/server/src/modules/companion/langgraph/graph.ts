@@ -16,21 +16,27 @@ import {
   SummaryNode,
 } from './nodes/index.js'
 
+/**
+ * LangGraph 约束：节点名不得与 state channel 同名。
+ * 因此节点用 step_* 前缀；通道名与 CompanionState / 节点 return 字段一致（safety、intent…）。
+ * 历史 bug：通道写成 safetyState 而节点 return safety → 图内状态永远写不进去，
+ * 条件边永远 skip memory，下游节点读不到上游结果。
+ */
 const CompanionGraphState = Annotation.Root({
   userId: Annotation<string>(),
   companionId: Annotation<string>(),
   conversationId: Annotation<string>(),
   userMessage: Annotation<string>(),
-  safetyState: Annotation<CompanionState['safety']>(),
-  intentState: Annotation<CompanionState['intent']>(),
-  emotionState: Annotation<CompanionState['emotion']>(),
-  relationshipState: Annotation<CompanionState['relationship']>(),
-  routeState: Annotation<CompanionState['route']>(),
-  policyState: Annotation<CompanionState['policy']>(),
-  qualityState: Annotation<CompanionState['quality']>(),
-  memoryCandidateState: Annotation<CompanionState['memoryCandidate']>(),
+  safety: Annotation<CompanionState['safety']>(),
+  intent: Annotation<CompanionState['intent']>(),
+  emotion: Annotation<CompanionState['emotion']>(),
+  relationship: Annotation<CompanionState['relationship']>(),
+  route: Annotation<CompanionState['route']>(),
+  policy: Annotation<CompanionState['policy']>(),
+  quality: Annotation<CompanionState['quality']>(),
+  memoryCandidate: Annotation<CompanionState['memoryCandidate']>(),
   extractedMemories: Annotation<CompanionState['extractedMemories']>(),
-  summaryState: Annotation<CompanionState['summary']>(),
+  summary: Annotation<CompanionState['summary']>(),
   assistantReply: Annotation<CompanionState['assistantReply']>(),
   partialTokens: Annotation<string | undefined>(),
   existingMemories: Annotation<CompanionState['existingMemories']>(),
@@ -42,15 +48,24 @@ const CompanionGraphState = Annotation.Root({
 
 type Branch = 'continue' | 'end_safety' | 'skip_memory'
 
-const _REQUIRED_FIELDS: Array<keyof CompanionState> = [
-  'safety',
-  'intent',
-  'emotion',
-  'relationship',
-  'route',
-  'policy',
-  'quality',
-]
+/** 对外/观测使用的逻辑节点名 → 图内实际 node id */
+export const GRAPH_STEP_TO_NODE = {
+  safety: 'step_safety',
+  intent: 'step_intent',
+  emotion: 'step_emotion',
+  relationship: 'step_relationship',
+  route: 'step_route',
+  policy: 'step_policy',
+  generate: 'step_generate',
+  quality: 'step_quality',
+  summary: 'step_summary',
+  memory_candidate: 'step_memory_candidate',
+  memory_extraction: 'step_memory_extraction',
+} as const
+
+const NODE_TO_GRAPH_STEP: Record<string, string> = Object.fromEntries(
+  Object.entries(GRAPH_STEP_TO_NODE).map(([step, node]) => [node, step]),
+)
 
 @Injectable()
 export class CompanionGraphService {
@@ -108,9 +123,10 @@ export class CompanionGraphService {
 
     const stream = rawStream as AsyncIterable<{ [node: string]: Partial<CompanionState> }>
     for await (const chunk of stream) {
-      for (const [node, patch] of Object.entries(chunk)) {
-        this.logger.log(`[graph] step=${node}_done`)
-        yield { node, patch: patch as Partial<CompanionState> }
+      for (const [nodeId, patch] of Object.entries(chunk)) {
+        const step = NODE_TO_GRAPH_STEP[nodeId] ?? nodeId
+        this.logger.log(`[graph] step=${step}_done`)
+        yield { node: step, patch: patch as Partial<CompanionState> }
       }
     }
   }
@@ -129,45 +145,46 @@ export class CompanionGraphService {
     memoryExtraction: MemoryExtractionNode
   }) {
     const builder = new StateGraph(CompanionGraphState)
+    const N = GRAPH_STEP_TO_NODE
 
-    builder.addNode('safety', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.safety, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('safety', nodes.safety, state, config),
     )
-    builder.addNode('intent', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.intent, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('intent', nodes.intent, state, config),
     )
-    builder.addNode('emotion', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.emotion, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('emotion', nodes.emotion, state, config),
     )
-    builder.addNode('relationship', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.relationship, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('relationship', nodes.relationship, state, config),
     )
-    builder.addNode('route', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.route, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('route', nodes.route, state, config),
     )
-    builder.addNode('policy', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.policy, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('policy', nodes.policy, state, config),
     )
-    builder.addNode('generate', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.generate, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('generate', nodes.generate, state, config),
     )
-    builder.addNode('quality', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.quality, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('quality', nodes.quality, state, config),
     )
-    builder.addNode('summary', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.summary, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('summary', nodes.summary, state, config),
     )
-    builder.addNode('memory_candidate', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.memory_candidate, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('memory_candidate', nodes.memoryCandidate, state, config),
     )
-    builder.addNode('memory_extraction', (state: CompanionState, config: RunnableConfig) =>
+    builder.addNode(N.memory_extraction, (state: CompanionState, config: RunnableConfig) =>
       this.runNode('memory_extraction', nodes.memoryExtraction, state, config),
     )
 
-    builder.addEdge(START as never, 'safety' as never)
+    builder.addEdge(START as never, N.safety as never)
 
     builder.addConditionalEdges(
-      'safety' as never,
+      N.safety as never,
       (state: CompanionState): Branch => {
         const action = state.safety?.boundaryAction
         if (action === 'refuse' || action === 'crisis_support') {
@@ -177,24 +194,24 @@ export class CompanionGraphService {
         return 'continue'
       },
       {
-        continue: 'intent' as never,
+        continue: N.intent as never,
         end_safety: END as never,
       },
     )
 
-    builder.addEdge('intent' as never, 'emotion' as never)
-    builder.addEdge('emotion' as never, 'relationship' as never)
-    builder.addEdge('relationship' as never, 'route' as never)
-    builder.addEdge('route' as never, 'policy' as never)
-    builder.addEdge('policy' as never, 'generate' as never)
-    builder.addEdge('generate' as never, 'quality' as never)
-    // Quality 为观测型：fail 仍继续 summary/memory，主回复由 stream 落库（gap G-QL-01）
-    builder.addEdge('quality' as never, 'summary' as never)
+    builder.addEdge(N.intent as never, N.emotion as never)
+    builder.addEdge(N.emotion as never, N.relationship as never)
+    builder.addEdge(N.relationship as never, N.route as never)
+    builder.addEdge(N.route as never, N.policy as never)
+    builder.addEdge(N.policy as never, N.generate as never)
+    builder.addEdge(N.generate as never, N.quality as never)
+    // Quality：观测 + 规则软修复（先接后推/句数/破沉浸）；修复结果写入 assistantReply 后继续
+    builder.addEdge(N.quality as never, N.summary as never)
 
-    builder.addEdge('summary' as never, 'memory_candidate' as never)
+    builder.addEdge(N.summary as never, N.memory_candidate as never)
 
     builder.addConditionalEdges(
-      'memory_candidate' as never,
+      N.memory_candidate as never,
       (state: CompanionState): Branch => {
         if (state.memoryCandidate?.shouldExtract) {
           return 'continue'
@@ -203,12 +220,12 @@ export class CompanionGraphService {
         return 'skip_memory'
       },
       {
-        continue: 'memory_extraction' as never,
+        continue: N.memory_extraction as never,
         skip_memory: END as never,
       },
     )
 
-    builder.addEdge('memory_extraction' as never, END as never)
+    builder.addEdge(N.memory_extraction as never, END as never)
 
     return builder.compile({ checkpointer: undefined })
   }

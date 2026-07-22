@@ -41,3 +41,16 @@ export const deleteSession = (sessionId: string) => alovaInstance.Delete(`/sessi
 /** 重命名会话 */
 export const renameSession = (sessionId: string, title: string) =>
   alovaInstance.Post<Session>(`/sessions/${sessionId}/rename`, { title })
+
+/** 知识库问答显式反馈（仅 Chat，非 Companion） */
+export const submitChatMessageFeedback = (body: {
+  messageId: string
+  sessionId: string
+  rating: 'helpful' | 'not_helpful'
+  reason?: string
+  traceId?: string
+}) =>
+  alovaInstance.Post<{ ok: true; messageId: string; rating: string }>(
+    '/chat-messages/feedback',
+    body,
+  )
