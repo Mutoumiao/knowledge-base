@@ -4,6 +4,7 @@ export type CompanionErrorCode =
   | 'ERR_SAFETY_BLOCKED'
   | 'ERR_LLM_TIMEOUT'
   | 'ERR_LLM_PARSE'
+  | 'ERR_EMPTY_REPLY'
   | 'ERR_GUARD_FAIL'
   | 'ERR_COMPANION_NOT_FOUND'
   | 'ERR_COMPANION_ARCHIVED'

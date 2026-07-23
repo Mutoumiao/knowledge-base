@@ -234,6 +234,18 @@ Policy 的 sentence/question/advice 预算 MUST 写进 prompt 正文，不要只
 **症状**：Admin Hub P95 长期样本不足（窗内仅有旧消息）。  
 **正确**：stream 成功路径 `Date.now()-startedAt` 传入 `persistAssistantMessage(..., { latencyMs })` 写入 metadata。
 
+### 静默空 done / 空助手气泡
+
+**症状**：SSE 以空 `fullReply` 的成功 `done` 结束；客户端空气泡或 L1 aborted 空文；观测显示 status=ok。  
+**原因**：generate 空输出 / 超时后仍走成功路径落库。  
+**正确**：非 safety 硬中断时 `assistantReply` 与 partial 皆空 → `ERR_EMPTY_REPLY` + flags.`empty_reply`；Abort → `ERR_LLM_TIMEOUT` + flags.`timeout`；**禁止**空串 `persistAssistantMessage`。
+
+### 记忆 type 误标 preference
+
+**症状**：管理面/注入把「加班失眠」标成 preference；回忆只吸事实。  
+**原因**：LLM type 直写落库，未做内容启发式。  
+**正确**：落库前 `resolvedType = inferMemoryTypeFromContent || llm || default`（`memory-extraction-node.cleanMemoryItems`）。
+
 ### 其它既有陷阱
 
 - LLM 超时未设 fallback → 整条 pipeline 崩。

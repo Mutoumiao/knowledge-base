@@ -136,7 +136,19 @@ export class CompanionChatTransport implements ChatTransport<UIMessage> {
                   fullReply?: string
                 }
                 // 若未收到 token 但 done 带全文，补一次 delta
-                const full = data.content || data.fullReply || ''
+                const full = (data.content || data.fullReply || '').trim()
+                // 服务端偶发空 done：展示错误，禁止当成功结束（不自动静默重放）
+                if (!textStarted && !full) {
+                  finishText()
+                  enqueue({
+                    type: 'error',
+                    errorText: '助手未生成有效回复，请重试',
+                  })
+                  enqueue({ type: 'finish', finishReason: 'error' })
+                  finished = true
+                  controller.close()
+                  return
+                }
                 if (!textStarted && full) {
                   ensureTextStart()
                   enqueue({ type: 'text-delta', id: textId, delta: full })
@@ -195,9 +207,19 @@ export class CompanionChatTransport implements ChatTransport<UIMessage> {
         } catch (err) {
           if (!finished) {
             finishText()
+            const isAbort =
+              (err instanceof Error && err.name === 'AbortError') ||
+              (typeof err === 'object' &&
+                err !== null &&
+                'name' in err &&
+                (err as { name?: string }).name === 'AbortError')
             enqueue({
               type: 'error',
-              errorText: err instanceof Error ? err.message : String(err),
+              errorText: isAbort
+                ? '请求超时或已取消，请重试'
+                : err instanceof Error
+                  ? err.message
+                  : String(err),
             })
             enqueue({ type: 'finish', finishReason: 'error' })
             finished = true

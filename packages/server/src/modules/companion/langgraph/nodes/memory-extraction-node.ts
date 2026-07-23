@@ -86,12 +86,38 @@ export class MemoryExtractionNode {
       if (seen.has(key)) continue
       seen.add(key)
       out.push({
-        type: item.type,
+        // 落库前纠偏：内容启发式优先，避免「加班失眠」等事实被 LLM 标成 preference
+        type: this.resolveMemoryType(content, item.type),
         content: content.slice(0, 80),
         importance: Math.min(5, Math.max(1, item.importance || 3)),
       })
     }
     return out
+  }
+
+  /**
+   * resolvedType = infer || llm || default
+   * 事实强信号强制 important_fact（由 inferMemoryTypeFromContent 承担）
+   */
+  private resolveMemoryType(
+    content: string,
+    llmType?: MemoryItem['type'] | string | null,
+  ): MemoryItem['type'] {
+    const inferred = this.shared.inferMemoryTypeFromContent(content)
+    if (inferred) return inferred
+    if (llmType && llmType in CATEGORY_TO_TYPE) {
+      return CATEGORY_TO_TYPE[llmType] ?? (llmType as MemoryItem['type'])
+    }
+    if (
+      llmType === 'preference' ||
+      llmType === 'boundary' ||
+      llmType === 'relationship_goal' ||
+      llmType === 'conversation_style' ||
+      llmType === 'important_fact'
+    ) {
+      return llmType
+    }
+    return 'important_fact'
   }
 
   private fallbackFromCandidate(state: CompanionState): MemoryItem[] {
@@ -108,7 +134,7 @@ export class MemoryExtractionNode {
     // 多事实时按条推断 type：避免「记住两件事」全部打成 preference
     if (facts.length > 0) {
       return facts.slice(0, MEMORY_EXTRACTION_LIMIT).map((content) => ({
-        type: this.shared.inferMemoryTypeFromContent(content) || defaultType,
+        type: this.resolveMemoryType(content, defaultType),
         content: content.slice(0, 80),
         importance,
       }))
@@ -116,7 +142,7 @@ export class MemoryExtractionNode {
 
     const heuristic = this.shared.heuristicMemoryFacts(state.userMessage)
     return heuristic.slice(0, MEMORY_EXTRACTION_LIMIT).map((content) => ({
-      type: this.shared.inferMemoryTypeFromContent(content) || defaultType,
+      type: this.resolveMemoryType(content, defaultType),
       content: content.slice(0, 80),
       importance,
     }))

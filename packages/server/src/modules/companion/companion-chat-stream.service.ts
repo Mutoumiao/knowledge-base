@@ -171,10 +171,27 @@ export class CompanionChatStreamService {
       const finalState = fullState as CompanionState
       const latencyMs = Date.now() - startedAt
 
-      // 先落库再 done：客户端收到完成时历史已可读；亦避免连发时 findRecent 缺上轮助手
-      if (reply) {
-        await this.pipeline.persistAssistantMessage(conversationId, finalState, { latencyMs })
+      // 非 safety 场景：禁止静默空成功 done / 伪造成功助手气泡
+      if (!reply) {
+        this.logger.warn(
+          `[streamChat] empty_reply conversationId=${conversationId} integrityOk=${integrityOk}`,
+        )
+        this.writeCompanionObs({
+          traceId,
+          userId: params.userId,
+          conversationId,
+          status: 'error',
+          latencyMs,
+          spanMs,
+          fullState: finalState,
+          emptyReply: true,
+        })
+        yield this.errorEvent('ERR_EMPTY_REPLY', '助手未生成有效回复，请重试')
+        return
       }
+
+      // 先落库再 done：客户端收到完成时历史已可读；亦避免连发时 findRecent 缺上轮助手
+      await this.pipeline.persistAssistantMessage(conversationId, finalState, { latencyMs })
 
       // 记忆必须 await 落库：queueMicrotask 会导致下一轮 prepareContext 与 API 轮询竞态丢记忆
       const extracted =
@@ -225,9 +242,9 @@ export class CompanionChatStreamService {
         yield this.errorEvent('ERR_COMPANION_ARCHIVED', '该伴侣已归档，无法发送新消息')
         return
       }
-      const code: CompanionErrorCode =
-        (err as { name?: string })?.name === 'AbortError' ? 'ERR_LLM_TIMEOUT' : 'ERR_LLM_PARSE'
-      this.logger.error(`streamChat error: ${message}`)
+      const isAbort = (err as { name?: string })?.name === 'AbortError'
+      const code: CompanionErrorCode = isAbort ? 'ERR_LLM_TIMEOUT' : 'ERR_LLM_PARSE'
+      this.logger.error(`streamChat error: ${message}${isAbort ? ' [timeout]' : ''}`)
       this.writeCompanionObs({
         traceId,
         userId: params.userId,
@@ -236,16 +253,19 @@ export class CompanionChatStreamService {
         latencyMs: Date.now() - startedAt,
         spanMs,
         fullState: {},
+        timeout: isAbort,
       })
       // 设计 A：若 prepareContext 已成功，user 已落库；此处 done 仅给客户端即时文案，不伪造成功助手消息
       const fallback = message.includes('State missing')
         ? '抱歉，伴侣对话管线暂不可用（可能未配置 Companion LLM）。请在管理后台检查模块配置后重试。'
-        : message
+        : isAbort
+          ? '请求超时或已中断，请重试'
+          : message
       yield {
         event: 'done',
         data: { fullReply: fallback, content: fallback, quality: undefined },
       }
-      yield this.errorEvent(code, message)
+      yield this.errorEvent(code, isAbort ? fallback : message)
     }
   }
 
@@ -259,6 +279,8 @@ export class CompanionChatStreamService {
     spanMs: Record<string, number>
     fullState: Partial<CompanionState>
     safetyHardStop?: boolean
+    emptyReply?: boolean
+    timeout?: boolean
   }): void {
     if (!this.obsTurn) return
     const memCount = input.fullState.existingMemories?.length ?? 0
@@ -272,6 +294,8 @@ export class CompanionChatStreamService {
       route: input.fullState.route?.route,
       quality: quality?.status,
       safetyHardStop: input.safetyHardStop || undefined,
+      emptyReply: input.emptyReply || undefined,
+      timeout: input.timeout || undefined,
       ...(tokens.inputTokens > 0 || tokens.outputTokens > 0
         ? { inputTokens: tokens.inputTokens, outputTokens: tokens.outputTokens }
         : {}),
@@ -289,6 +313,8 @@ export class CompanionChatStreamService {
         flags: {
           qualityFail: quality?.status === 'fail' || undefined,
           safetyHardStop: input.safetyHardStop || undefined,
+          empty_reply: input.emptyReply || undefined,
+          timeout: input.timeout || undefined,
         },
         spanMs: input.spanMs,
         spanAttrs,

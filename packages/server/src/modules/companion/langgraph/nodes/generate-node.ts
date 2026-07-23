@@ -204,25 +204,21 @@ export class GenerateNode {
       lines.push('4. 本轮不要提问，或最多在结尾用一句极轻的开放句（可不问）。')
     }
     const injectable = this.shared.filterInjectableMemories(state.existingMemories)
-    if (injectable.length > 0 && this.shared.isRecallProbe(state.userMessage)) {
+    const isRecall =
+      this.shared.isRecallProbe(state.userMessage) ||
+      /还记得|记得吗|记不记得/.test(state.userMessage)
+    if (injectable.length > 0 && isRecall) {
       const bulletList = injectable
         .map((m, i) => `  (${i + 1}) ${m.content}`)
         .join('\n')
       lines.push(
-        '5. 用户在做回忆探针：必须依据「长期记忆」作答；若用户问起多项（如回应偏好 + 近况/失眠），须在同一回复中自然覆盖记忆列表里的相关要点（同义改写即可），禁止只答生活事实而漏掉回应偏好。',
+        '5. 用户在做回忆探针（同会话与跨会话均适用）：必须依据「长期记忆」作答；若用户问起多项（如回应偏好 + 近况/失眠/跳槽压力），须在同一回复中自然覆盖记忆列表里的相关要点（同义改写即可），禁止只答生活事实而漏掉回应偏好，也禁止只答偏好而完全忽略已注入的关键事实。',
       )
       lines.push(
         `5b. 本轮已存记忆要点（共 ${injectable.length} 条；相关条目须点到，禁止编造列表外细节）：\n${bulletList}`,
       )
       lines.push(
-        '5c. 没有把握的内容诚实说不确定；禁止用「我记得的」空话糊弄，也禁止把未说过的症状/细节当作记忆复述。',
-      )
-    } else if (
-      injectable.length > 0 &&
-      /还记得|记得吗|记不记得/.test(state.userMessage)
-    ) {
-      lines.push(
-        '5. 用户在做回忆探针：直接依据「长期记忆」作答，点出具体内容；没有把握就说不太确定。',
+        '5c. 没有把握的内容诚实说不确定；禁止用「我记得的」空话糊弄，也禁止把未说过的症状/细节当作记忆复述；禁止假装本轮才写入新记忆。',
       )
     }
     if (isCrisisLikeSafety(state.safety) || state.safety?.category === 'self_harm') {
@@ -242,6 +238,22 @@ export class GenerateNode {
     if (recentRefused && userLooksNormal && !isCrisisLikeSafety(state.safety)) {
       lines.push(
         '7. 用户已回到正常话题：按人设正常陪伴/倾听，禁止延续上一轮的安全拒绝话术。',
+      )
+    }
+    // 身份开场：名称或人设锚点，避免通用客服腔
+    const isIdentityOpen =
+      /介绍下?自己|自我介绍|你是谁|怎么陪|如何陪|打个招呼|认识一下|你会怎么/.test(
+        state.userMessage,
+      )
+    if (isIdentityOpen) {
+      lines.push(
+        '8. 身份开场：优先说出伴侣名称，或用可识别的人设气质锚点开场；禁止退化为通用智能客服/助手式自我介绍。',
+      )
+    }
+    // 非安全轮禁止 AI 客服式自曝（破沉浸）
+    if (!isCrisisLikeSafety(state.safety) && state.safety?.boundaryAction !== 'refuse') {
+      lines.push(
+        '9. 禁止主动自称「AI 助手」「智能客服」「语言模型」「人工智能」等破沉浸元身份；用当前人设身份说话（安全声明/危机转介所需披露除外）。',
       )
     }
     if (lines.length === 0) {

@@ -129,6 +129,19 @@ describe('UT-MEM-type-infer: 内容推断记忆类型', () => {
     expect(shared.inferMemoryTypeFromContent('我最近因为加班有点失眠')).toBe('important_fact')
   })
 
+  it('加班失眠 / 跳槽压力 强制 important_fact，先复述偏好保持 preference', () => {
+    expect(shared.inferMemoryTypeFromContent('我最近因为加班有点失眠')).toBe('important_fact')
+    expect(shared.inferMemoryTypeFromContent('我最近在准备跳槽，压力很大')).toBe('important_fact')
+    expect(shared.inferMemoryTypeFromContent('加班多的时候容易心情差')).toBe('important_fact')
+    expect(
+      shared.inferMemoryTypeFromContent('我更喜欢你先复述我的感受，再说别的'),
+    ).toBe('preference')
+    expect(shared.inferMemoryTypeFromContent('我更喜欢你先哄我一下，再问细节')).toBe(
+      'preference',
+    )
+    expect(shared.inferMemoryTypeFromContent('我讨厌空话安慰')).toBe('preference')
+  })
+
   it('formatMemoriesForPrompt 带类型标签且纠正误标', () => {
     const text = shared.formatMemoriesForPrompt(
       [

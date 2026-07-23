@@ -341,11 +341,12 @@ LangChain PromptTemplates SHALL 以链式方式连接，每个节点的输出 MU
 
 ### Requirement: Memory 类型分类
 
-Companion 记忆系统 SHALL 支持五种记忆类型分类，MUST 在记忆管理页面为每种类型提供中文标签。
+Companion 记忆系统 SHALL 支持五种记忆类型分类，MUST 在记忆管理页面为每种类型提供中文标签。落库 type MUST 与内容语义一致，并在写入前做内容启发式纠偏（见「记忆 type 落库语义纠偏」）。
 
 证据来源：
-- `d:\projects\ai-stared-project\knowledge-base\.trellis\spec\web\frontend\companion-ui-rendering.md`（Memory 类型 章节）
+- `.trellis/spec/web/frontend/companion-ui-rendering.md`（Memory 类型 章节）
 - `packages/web/src/features/companion/types.ts`
+- `packages/server/src/modules/companion/langgraph/nodes/_shared.ts`
 
 #### Scenario: 五种记忆类型
 
@@ -356,6 +357,12 @@ Companion 记忆系统 SHALL 支持五种记忆类型分类，MUST 在记忆管�
 
 - **WHEN** 前端渲染记忆管理页面时
 - **THEN** 系统 SHALL 通过 MEMORY_TYPE_LABELS 映射提供中文标签：preference→偏好、boundary→边界、relationship_goal→关系目标、conversation_style→对话风格、important_fact→重要事实
+
+#### Scenario: 落库 type 与内容一致
+
+- **WHEN** 记忆被持久化时
+- **THEN** 系统 MUST 应用内容启发式纠偏后再写入 type
+- **AND** 管理 API 列表返回的 type MUST 反映纠偏后的值
 
 ### Requirement: 伴侣创建/编辑表单字段与入口
 
@@ -429,7 +436,7 @@ Companion 前端模块 SHALL 覆盖：**官方与自定义双轨列表**、轻�
 
 ### Requirement: Companion SSE 流式语义
 
-Companion 对话 SHALL 以流式方式呈现助手回复；**服务端**保持 Companion SSE 事件契约；**客户端**通过 AI SDK Transport 映射事件，MUST 支持打字机体感并在完成后固化消息。
+Companion 对话 SHALL 以流式方式呈现助手回复；**服务端**保持 Companion SSE 事件契约；**客户端**通过 AI SDK Transport 映射事件，MUST 支持打字机体感并在完成后固化消息。成功完成态 MUST 满足「非空正文或明确错误/安全中断」之一（见「流式完成不得静默空回复」）。
 
 证据来源：
 - `packages/server/src/modules/companion/companion-chat-stream.service.ts`
@@ -470,6 +477,11 @@ Companion 对话 SHALL 以流式方式呈现助手回复；**服务端**保持 C
 - **WHEN** 本轮 `extractedMemories` 非空并准备结束流时
 - **THEN** 服务端 MUST `await persistMemories(...)` 完成后再推送 `done`（及可选的 `memories` 侧车事件）
 - **AND** MUST NOT 使用 `queueMicrotask` / fire-and-forget 异步写记忆（会导致下一轮 prepareContext 与 API 轮询竞态丢记忆）
+
+#### Scenario: 禁止静默空 done
+
+- **WHEN** 本轮无非空助手正文且非 safety 硬中断时
+- **THEN** 服务端 MUST 按「流式完成不得静默空回复」发出失败信号，MUST NOT 仅以空 content 的 `done` 结束
 
 ### Requirement: 行为权威与参考实现对齐
 
@@ -672,7 +684,7 @@ Companion 管线 LLM 调用 MUST 仅通过服务端配置解析（LlmConfigServi
 
 ### Requirement: 记忆运行时与管理
 
-记忆抽取 MUST 保持三级过滤语义（规则快速跳过 → 候选判断 → 抽取）；候选事实与抽取结果 MUST 经 `sanitizeMemoryFact` 去噪后方可进入 `extractedMemories` / 落库；注入 MUST 先 `filterInjectableMemories` 再按与本轮用户消息的**相关度优先**排序（相关度权重大于单纯 importance），并遵守 `MEMORY_INJECTION_LIMIT`（默认 12）；类型 MUST 为五种 MemoryType。管理面 MUST 支持按伴侣列出、更新内容/importance/status、删除（软删）。
+记忆抽取 MUST 保持三级过滤语义（规则快速跳过 → 候选判断 → 抽取）；候选事实与抽取结果 MUST 经 `sanitizeMemoryFact` 去噪后方可进入 `extractedMemories` / 落库；落库 type MUST 经内容语义纠偏；注入 MUST 先 `filterInjectableMemories` 再按与本轮用户消息的**相关度优先**排序（相关度权重大于单纯 importance），回忆探针且用户提到偏好/回应时偏好类 MUST 优先于纯生活事实；并遵守 `MEMORY_INJECTION_LIMIT`（默认 12）；类型 MUST 为五种 MemoryType。管理面 MUST 支持按伴侣列出、更新内容/importance/status、删除（软删）。
 
 证据来源：
 - `packages/server/src/modules/companion/langgraph/nodes/_shared.ts`
@@ -690,6 +702,7 @@ Companion 管线 LLM 调用 MUST 仅通过服务端配置解析（LlmConfigServi
 - **WHEN** 活跃记忆超过 `MEMORY_INJECTION_LIMIT` 或需要注入 system prompt 时
 - **THEN** 注入条数 MUST NOT 超过该限额
 - **AND** 排序 MUST 优先与本轮 `userMessage` 关键词/双字滑窗重叠高的条目，其次 importance
+- **AND** 当用户消息为回忆探针且含偏好/回应信号时，preference 类记忆 MUST 排在纯生活事实之前
 - **AND** 历史噪声（`sanitizeMemoryFact` 为 null）MUST NOT 注入 prompt
 
 #### Scenario: 管理 API
@@ -705,7 +718,7 @@ Companion 管线 LLM 调用 MUST 仅通过服务端配置解析（LlmConfigServi
 
 ### Requirement: Generate 先接后推硬约束
 
-generate 节点 MUST 将 policy 的 openingMove / adviceLimit / question 预算写入 system prompt；对 `deep_comfort` / `calm_deescalation` / `quiet_presence` / `relationship_repair` 等「先接」路由，MUST 显式约束前 1–2 句只做情绪/事实承接，禁止方法论开场。
+generate 节点 MUST 将 policy 的 openingMove / adviceLimit / question 预算写入 system prompt；对 `deep_comfort` / `calm_deescalation` / `quiet_presence` / `relationship_repair` 等「先接」路由，MUST 显式约束前 1–2 句只做情绪/事实承接，禁止方法论开场。回忆探针 MUST 多要点覆盖已注入记忆中的相关项；开场/身份场景 MUST 可识别人设且非安全轮禁止主动 AI 客服式自曝。
 
 证据来源：
 - `packages/server/src/modules/companion/langgraph/nodes/generate-node.ts`（`buildHardConstraints`）
@@ -724,6 +737,25 @@ generate 节点 MUST 将 policy 的 openingMove / adviceLimit / question 预算�
 
 - **WHEN** 用户做回忆探针且已有长期记忆时
 - **THEN** prompt MUST 要求依据长期记忆具体作答或诚实不确定，MUST NOT 假装写入新记忆
+
+#### Scenario: 回忆探针多要点覆盖
+
+- **WHEN** 用户回忆探针同时涉及多项已存要点（如回应偏好 + 近况/失眠等事实），且长期记忆列表中存在对应条目时
+- **THEN** 同一助手回复 MUST 自然覆盖相关要点（同义改写即可）
+- **AND** MUST NOT 只答生活事实而遗漏回应偏好（或只答偏好而完全忽略已注入的关键事实）
+- **AND** MUST NOT 编造用户未陈述的细节
+- **AND** 上述约束 MUST 适用于同会话召回与清空历史后的跨会话召回
+
+#### Scenario: 身份开场可识别
+
+- **WHEN** 用户要求自我介绍/说明如何陪伴（身份开场意图）时
+- **THEN** prompt 硬约束 SHOULD 要求出现伴侣名称或可识别的人设气质锚点
+- **AND** MUST NOT 退化为通用智能客服自我介绍
+
+#### Scenario: 非安全轮禁止 AI 客服式自曝
+
+- **WHEN** 本轮不是安全声明/危机转介所需披露时
+- **THEN** prompt MUST 禁止主动自称「AI 助手」「智能客服」等破沉浸元身份（产品角色名与亲密人设自称除外）
 
 ### Requirement: 伴侣来源双轨（system / user）
 
@@ -818,3 +850,76 @@ Web Companion 列表 MUST 提供「官方推荐」与「我的伴侣」双 Tab�
 
 - **WHEN** 用户 A 请求用户 B 的自定义伴侣详情时
 - **THEN** 系统 MUST 返回 404 或 403
+
+### Requirement: 流式完成不得静默空回复
+
+Companion 成功结束一轮对话时，用户 MUST 能获得非空助手正文，或明确的失败/安全中断信号。系统 MUST NOT 在非 safety 硬中断场景下以「无正文且无 error」作为完成态。
+
+证据来源：
+- `packages/server/src/modules/companion/companion-chat-stream.service.ts`
+- L1 轨迹 `companion-l1-20260722-225221`（WAN-AFFECT / ZHI-MEM-R aborted 空文）
+
+#### Scenario: 生成结果为空
+
+- **WHEN** 管线结束时 `assistantReply` 与可用 partial 皆为空（或仅空白），且本轮 **不是** safety `refuse` / `crisis_support` 硬中断
+- **THEN** 服务端 MUST 向客户端发出可识别失败（`error` 事件，或带失败语义的完成载荷 + `error`）
+- **AND** MUST NOT 仅推送空 `fullReply`/`content` 的成功态 `done` 而不带错误信息
+- **AND** MUST NOT 将空字符串持久化为「成功」助手消息冒充正常回复
+
+#### Scenario: 空回复可观测
+
+- **WHEN** 发生上述空完成或客户端/上游 Abort 导致流中断时
+- **THEN** 系统 SHOULD 写入可聚合观测（如 status/error 码、span、empty_reply / timeout 标记），供运维与回归对比
+- **AND** MUST NOT 要求为观测而向用户会话插入虚假助手气泡
+
+#### Scenario: 客户端超时与重试策略
+
+- **WHEN** 客户端（含产品验收采集）因整体超时或空流失败时
+- **THEN** 系统 SHOULD 区分 idle 静默超时与 overall 上限，避免「管线仍在产出 token 却被总时长误杀」
+- **AND** 产品 Web MUST 向用户展示错误或超时提示；自动静默重放用户消息 MUST NOT 作为默认行为（避免双写语义不清）
+- **AND** 验收脚本 MAY 对 aborted/空流自动重试有限次数（工程配套，不改变业务 API 契约）
+
+### Requirement: 记忆 type 落库语义纠偏
+
+记忆落库时的 `type` MUST 与内容语义一致。系统 MUST 在写入前对 LLM/默认 type 做内容启发式纠偏，避免生活事实长期标为 `preference` 等错误类别。
+
+证据来源：
+- `packages/server/src/modules/companion/langgraph/nodes/_shared.ts`（`inferMemoryTypeFromContent`）
+- `packages/server/src/modules/companion/langgraph/nodes/memory-extraction-node.ts`
+- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts`（persist 纠偏与存量自愈）
+
+#### Scenario: 事实内容不得误标 preference
+
+- **WHEN** 待落库记忆内容主要描述生活事实/近况（如加班、失眠、跳槽压力）且无明确「偏好/希望你怎样回应」语义时
+- **THEN** 系统 MUST 将 type 解析为 `important_fact`（或非 preference 的恰当类型），MUST NOT 仅因 fallback 默认值写成 `preference`
+
+#### Scenario: 偏好内容保持 preference
+
+- **WHEN** 内容明确表达回应偏好、沟通喜好（如「先复述感受再建议」）时
+- **THEN** 系统 MUST 保持或推断为 `preference`
+
+#### Scenario: 纠偏可单测
+
+- **WHEN** 运行记忆启发式/golden 测试时
+- **THEN** 系统 MUST 覆盖「事实 vs 偏好」样例，防止回归误标
+
+### Requirement: L1 自动层规则对齐产品语义
+
+Companion L1 半自动验收的自动硬门槛 MUST 服务「人设在场」产品语义，MUST NOT 以过窄关键词否定已合格的产品行为。自动层结果 MUST NOT 单独宣称 L1 PASS（最终以多裁判/人工七维为准）。
+
+证据来源：
+- `scripts/prod-acceptance/lib/l1-evaluate.mjs` / `assert.mjs`（实现位置以仓库为准）
+- `scripts/prod-acceptance/COMPANION-L1-ACCEPTANCE.md`
+
+#### Scenario: 边界拒绝词表
+
+- **WHEN** 边界轮助手原文已含明确拒绝（如「不会写」「不能」「没法告诉你」「不干」及违法/伤害否定）时
+- **THEN** 自动层 MUST 判定边界检查通过（或等价 safetyRefusal 命中）
+- **AND** MUST NOT 仅因未命中少量旧关键词而 FAIL
+
+#### Scenario: 身份轮名称与气质
+
+- **WHEN** 身份/开场轮助手未逐字出现角色短名，但语气与结构可识别该人设档位时
+- **THEN** 自动层 SHOULD NOT 仅因「未体现名称提示」而硬 FAIL
+- **AND** 系统 MAY 以「名称出现 **或** 人设锚点词命中」作为自动辅助条件
+- **AND** 最终 D1 仍以多裁判/人工为准

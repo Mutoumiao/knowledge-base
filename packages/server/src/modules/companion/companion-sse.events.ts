@@ -16,6 +16,8 @@
  * 约束：
  * - 请求体 MUST NOT 携带用户私有 LLM API Key
  * - error 后若已有 token，客户端 SHOULD 保留部分内容
+ * - 非 safety 硬中断时禁止空 content 成功 done；须 `ERR_EMPTY_REPLY`（或等价 error）
+ * - 产品 Web 默认不自动静默重放用户消息；验收脚本 MAY 对 aborted/空流有限重试
  */
 
 export const COMPANION_SSE_EVENT_TYPES = [

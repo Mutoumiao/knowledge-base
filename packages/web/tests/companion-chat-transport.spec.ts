@@ -134,4 +134,33 @@ describe('UT-TR: CompanionChatTransport', () => {
       }),
     ).rejects.toThrow(/500/)
   })
+
+  it('UT-TR-empty-done: 空 done 映射为 error，不静默成功', async () => {
+    globalThis.fetch = mockFetchStream([
+      ssePayload(['event: done\ndata: {"fullReply":"","content":""}']),
+    ])
+
+    const transport = new CompanionChatTransport({
+      getConversationId: () => 'conv-1',
+    })
+    const stream = await transport.sendMessages({
+      trigger: 'submit-message',
+      chatId: 'chat-1',
+      messageId: undefined,
+      messages: [userMsg],
+      abortSignal: undefined,
+      body: { conversationId: 'conv-1' },
+    })
+
+    const chunks = await collect(stream)
+    const types = chunks.map((c) => (c as { type: string }).type)
+    expect(types).toContain('error')
+    expect(types).toContain('finish')
+    expect(types).not.toContain('text-delta')
+    const err = chunks.find((c) => (c as { type: string }).type === 'error') as {
+      errorText: string
+    }
+    expect(err.errorText).toMatch(/未生成有效回复|重试/)
+  })
 })
+

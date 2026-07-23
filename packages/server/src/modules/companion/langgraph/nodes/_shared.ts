@@ -307,12 +307,18 @@ export class SharedNodeFactory {
     const c = (content ?? '').trim()
     if (!c) return 'important_fact'
     if (/边界|别再|不要再|不希望你|禁止|讨厌你(?:这样|那样)?/.test(c)) return 'boundary'
+    // 生活事实强信号：加班/失眠/跳槽等优先于弱偏好词，避免整句误标 preference
+    const factStrong =
+      /加班|失眠|睡不着|跳槽|压力很大|准备跳槽|见家长|见客户|被领导|放鸽子|心情差/.test(c)
+    const prefStrong =
+      /更喜欢|希望你|偏好|先.*再|回应|复述|听感受|先被哄|别贫|别空话|讨厌空话|先哄/.test(c)
+    if (factStrong && !prefStrong) return 'important_fact'
     if (
-      /更喜欢|希望你|偏好|先.*再|回应|复述|听感受|先被哄|别贫|别空话|讨厌空话|说话方式|语气/.test(
+      /更喜欢|希望你|偏好|先.*再|回应|复述|听感受|先被哄|别贫|别空话|讨厌空话|说话方式|语气|先哄/.test(
         c,
       )
     ) {
-      if (/说话方式|语气|风格/.test(c) && !/希望你|更喜欢|偏好/.test(c)) {
+      if (/说话方式|语气|风格/.test(c) && !/希望你|更喜欢|偏好|先哄/.test(c)) {
         return 'conversation_style'
       }
       return 'preference'
