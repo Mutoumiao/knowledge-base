@@ -12,7 +12,7 @@ import {
   type CompanionTokenBucket,
   getCompanionTokenBucket,
 } from './langchain/token-usage.js'
-import type { CompanionState } from './langgraph/interfaces.js'
+import type { CompanionState, NodeExecutionContext } from './langgraph/interfaces.js'
 import {
   absoluteSnapshotToDelta,
   collapseRepeatedReply,
@@ -50,6 +50,8 @@ export class CompanionChatStreamService {
     const spanMs: Record<string, number> = {}
     // 本回合 LLM token 累加（节点 invoke/stream 经 ALS 写入）
     beginCompanionTokenBucket()
+    /** O11：与 graph 共享同一 structuredStages 引用；catch 也要能挂 spanAttrs */
+    let executionCtx: NodeExecutionContext | undefined
     try {
       const { companion, conversationId, initialState, ctx } =
         await this.pipeline.prepareContext(params)
@@ -62,7 +64,7 @@ export class CompanionChatStreamService {
       }
 
       const signal = params.signal ?? new AbortController().signal
-      const executionCtx = { ...ctx, signal }
+      executionCtx = { ...ctx, signal }
 
       let fullState: Partial<CompanionState> = { ...initialState }
       /** 已向客户端累计发出的正文（partialTokens 按「绝对快照」解释，防 quality 二次全文拼接） */
@@ -141,6 +143,7 @@ export class CompanionChatStreamService {
           spanMs,
           fullState: finalState,
           emptyReply: true,
+          structuredStages: executionCtx?.structuredStages,
         })
         yield this.errorEvent('ERR_EMPTY_REPLY', '助手未生成有效回复，请重试')
         return
@@ -186,6 +189,7 @@ export class CompanionChatStreamService {
         postProcessMs,
         spanMs,
         fullState: finalState,
+        structuredStages: executionCtx?.structuredStages,
       })
     } catch (err) {
       const message = (err as Error).message || '服务暂时不可用'
@@ -210,6 +214,7 @@ export class CompanionChatStreamService {
         spanMs,
         fullState: {},
         timeout: isAbort,
+        structuredStages: executionCtx?.structuredStages,
       })
       // 失败只发 error：禁止先 done（非空 fallback）再 error——Transport 会把 done 当成功 finish 并丢弃后续 error
       // 设计 A：若 prepareContext 已成功，user 已落库；此处不伪造成功助手消息
@@ -233,12 +238,18 @@ export class CompanionChatStreamService {
     fullState: Partial<CompanionState>
     emptyReply?: boolean
     timeout?: boolean
+    /** O11：节点级 structured 三态；无则跳过 */
+    structuredStages?: Record<string, { outcome: string; reason?: string }>
   }): void {
     if (!this.obsTurn) return
     const memCount = input.fullState.existingMemories?.length ?? 0
     const writtenCount = input.fullState.extractedMemories?.length ?? 0
     const quality = input.fullState.quality
     const tokens = this.snapshotTokens()
+    const stages =
+      input.structuredStages && Object.keys(input.structuredStages).length > 0
+        ? input.structuredStages
+        : undefined
     const spanAttrs: Record<string, unknown> = {
       memoryLoaded: memCount,
       writtenCount,
@@ -247,6 +258,7 @@ export class CompanionChatStreamService {
       quality: quality?.status,
       emptyReply: input.emptyReply || undefined,
       timeout: input.timeout || undefined,
+      ...(stages ? { structuredStages: stages } : {}),
       ...(tokens.inputTokens > 0 || tokens.outputTokens > 0
         ? { inputTokens: tokens.inputTokens, outputTokens: tokens.outputTokens }
         : {}),

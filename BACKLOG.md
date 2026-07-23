@@ -1,34 +1,52 @@
 # BACKLOG
 
-## Open — Companion 结构化后产品债（D12 Pass 后）
+## Closed — Companion L1 过线（2026-07-23）
 
-> 来源：`companion-structured-json-output` D12 预发（2026-07-23，deepseek-v4-flash + L1 全量）。  
-> Change 已归档：`openspec/changes/archive/2026-07-23-companion-structured-json-output/`。  
-> 证据：`docs/report/companion-structured-json-output-preflight-result-2026-07-23.md`。  
-> **整产品结论报告（Complete vs Optimize + 建议 change 切分）：**  
-> `docs/report/companion-product-gap-and-optimize-2026-07-23.md`  
-> **Grill 冻结（立项以报告 §11 为准）：** 本阶段完工线 = L1 七维；第一批 change = **C2 边界人设拒绝有正文 + O7/C5 验收最小可信**；O1/C3 仅失败触发；范围仅官方四角色。  
-> **不**阻塞结构化 jsonMode 发版；与 D12 门禁解耦。
+> 详情与证据见 `docs/report/companion-product-gap-and-optimize-2026-07-23.md` §0–§1、§11。  
+> 终裁：`scripts/prod-acceptance/judge-packs/companion-l1-20260723-215213/outputs/final-l1-verdict.json`（`finalL1Verdict=PASS`，盲测 4/4）。
 
-### 本阶段 P0（Grill：第一批 change / L1 过线）
+- [x] **D12 结构化 jsonMode** — `archive/2026-07-23-companion-structured-json-output/`
+- [x] **边界人设拒绝有正文（C2/O5）** — `archive/2026-07-23-companion-l1-boundary-and-judge/`
+- [x] **L1 验收最小可信（O7/C5）** — 记忆关键词移出 auto hard gate；七维/盲测可签
+- [x] **L1 签字（C1）** — 官方四角色七维 PASS + 盲测 ≥70% + agent 终裁（产品负责人可 counter-sign）
+- [x] **post-L1 硬化** — 空流不假成功、记忆 type 纠偏、多要点、开场/破沉浸、auto 减噪 — `archive/2026-07-23-companion-post-l1-hardening/`
 
-- [ ] **违法/网暴等人设拒绝有正文**（C2）：正常助手轮入库；约束 generate；0 有害；可续聊（危机 soft 已 OK，对齐违法类）
-- [ ] **L1 验收最小可信**（O7+C5）：记忆检查关键词降权；人工七维可勾选表（含 D5 盲测位）
-- [ ] **L1 签字**（C1）：官方四角色七维全过 + 盲测 ≥70% + 本人签（不要求 auto 全绿）
+---
 
-### 触发后才做（非默认）
+## Open — Companion Post-L1 产品债（L1 PASS 后）
 
-- [ ] **intent enum 对齐**（O1）：仅当七维失败且归因路由/策略钝化；**不**以 100% Zod 为门禁
-- [ ] **同会话记忆管线**（C3）：仅当人工证伪「真接不住」（非判据误杀）
+> 来源：L1 live 终裁 warnings + D12 节点表 + Care/parity 残余。  
+> **整产品报告：** `docs/report/companion-product-gap-and-optimize-2026-07-23.md`  
+> **Grill 冻结（2026-07-23）：** 本阶段完工线 = **质量线**；DoD = **O1 + O11**；change 建议名 **`companion-intent-enum-alignment`**。  
+> 权威：`docs/grill-sessions/2026-07-23-companion-post-l1-quality-grilling.md` + 报告 **§12.6**。  
+> 与 D12 / L1 门禁解耦。
 
-### 次优先 / L1 后
+### 本阶段 P0（Grill：质量线）
 
-- [ ] L1 自动层误杀继续打磨（在最小可信之后）
-- [ ] Care 自动投递、parity archive、emotion/relationship fallback 等（见报告 §11.3 Non-Goals）
+- [x] **intent enum 对齐 + 降节点 fallback（O1）** — change `companion-intent-enum-alignment`：alias-first + EXAMPLE + roleplay 补枝；**未做** schema 并值（D3.1 stay-alias-only）。对照：`openspec/changes/companion-intent-enum-alignment/COMPARE.md`
+- [x] **structured 阶段可聚合观测（O11）** — `spanAttrs.structuredStages`；三态 success/coerced/fallback；无告警通道
 
-### 明确推迟（原 change P1，默认不做）
+### O1 残余（不阻塞收口）
 
-> 原 tasks §5.1 / 5.3 / 5.4 / 5.5。无延迟/成本/工程漂移压力时 **不必做**。
+- [ ] **live 重采 intent 三态列**：同模型 jsonMode + L1/D12 级剧本，用 `structuredStages.intentNode` 再填一列对照表（可选）
+- [ ] **第二波并值（D3.1）**：仅当 live 对照仍 &lt;30% 且产品预审后；否则保持 alias-only
+
+### 流程旁路（不阻塞质量线）
+
+- [ ] **parity change 归档（C6）**：`openspec/changes/companion-parity-ai-partner-agent` 任务已全勾；确认主 spec 无冲突后 archive
+
+### 旁路小单 / 次优先（不进本 change DoD）
+
+- [ ] **记忆抽取质量（O8）**：漏抽（如 NEW-MEM「跳槽压力」）、噪声；**不做** L3
+- [ ] **L1 自动层减噪 v2（O7-续 / O9）**：礼貌软拒词表；BRIDGE 短回复启发式
+- [ ] **Care 自动投递（C4）**：须单独产品决策；当前 **无** Cron
+- [ ] **同会话记忆管线（C3）**：仅人工证伪「真接不住」后
+- [ ] **emotion / relationship 降 fallback（O2）**：O1 之后或投诉时
+- [ ] L2 / L3 — **默认不做**，须单独 Grill
+
+### 明确推迟（structured 原 P1，默认不做）
+
+> 原 structured change tasks §5.1 / 5.3 / 5.4 / 5.5。无延迟/成本/工程漂移压力时 **不必做**。
 
 - [ ] （可选）危机关键词 **短路 safety LLM** → 直接 soft_boundary（省 1 次 LLM）
 - [ ] （可选）Zod→EXAMPLE 生成工具，减少 prompt 样例漂移

@@ -22,4 +22,11 @@ export interface StructuredOutputOptions<T> {
   repairBudget?: { used: number; budget: number }
 }
 
+/** invokeWithFallback 成功返回：透传 enum coerce 结局（不含 fallback，失败仍抛） */
+export type StructuredInvokeSuccess<T> = {
+  data: T
+  outcome: 'success' | 'coerced'
+  reason?: string
+}
+
 export type PromptInput = string | ChatPromptTemplate | Runnable

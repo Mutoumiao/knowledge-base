@@ -1,8 +1,10 @@
 export * from './constants.js'
 export { LangChainLlmService } from './langchain-llm.service.js'
 export {
+  applyEnumValueCoerce,
   applyFieldAliases,
   applyNodeDefaults,
+  ENUM_VALUE_ALIASES,
   extractBalancedJsonObject,
   parseStructuredJson,
   stripMarkdownFence,

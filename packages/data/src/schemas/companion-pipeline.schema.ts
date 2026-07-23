@@ -240,6 +240,7 @@ export const emotionRouteSchema = z.object({
     'practical_support',
     'quiet_presence',
     'memory_ack',
+    'roleplay_flow',
   ]),
   responseLength: z.enum(['very_short', 'short', 'medium', 'long']),
   shouldAskQuestion: z.boolean(),

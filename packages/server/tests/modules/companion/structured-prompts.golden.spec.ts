@@ -50,6 +50,12 @@ describe('structured prompts contain json + schema field names (D2/D12)', () => 
     expect(text).toContain('primary')
     expect(text).toContain('userNeed')
     expect(text).toContain('requestedAgentAction')
+    // 合法 enum 字面量出现在 EXAMPLE / 允许列表
+    expect(text).toContain('emotional_support')
+    expect(text).toContain('be_comforted')
+    expect(text).toContain('comfort_first')
+    expect(text).toContain('roleplay')
+    expect(text).toContain('casual_chat')
   })
 
   it('emotion', async () => {

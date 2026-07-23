@@ -63,6 +63,9 @@ export const conversationIntentPrompt = ChatPromptTemplate.fromMessages([
       '优先区分：普通闲聊、情绪陪伴、恋爱暧昧、角色扮演、生活分享、关系建议、记忆更新、偏好设置、对 Agent 的反馈、误会修复。',
       '不要把所有问题都归为关系建议；用户只是想被陪伴、被听见或维持互动时，要识别为陪伴类意图。',
       '当用户表达模糊但情绪明确时，先判断情绪和期待，再决定是否需要追问。',
+      'primary 只能取：casual_chat | emotional_support | relationship_advice | romantic_flirt | companionship_presence | roleplay | life_sharing | memory_update | preference_setting | agent_feedback | conversation_repair | date_or_activity_planning | creative_request | meta_question | unclear',
+      'userNeed 只能取：be_heard | be_comforted | get_advice | get_reply_draft | play_along | feel_connected | set_boundary | update_memory | adjust_agent | unknown',
+      'requestedAgentAction 只能取：answer_directly | comfort_first | ask_follow_up | draft_message | analyze_situation | roleplay_response | remember_fact | adjust_style | repair_misunderstanding | continue_topic',
       JSON_OUTPUT_RULES,
       'EXAMPLE JSON OUTPUT:',
       exampleJson({

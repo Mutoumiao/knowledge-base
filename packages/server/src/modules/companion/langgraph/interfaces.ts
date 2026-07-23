@@ -180,6 +180,7 @@ export type RouteName =
   | 'practical_support'
   | 'quiet_presence'
   | 'memory_ack'
+  | 'roleplay_flow'
 
 export type PolicyResult = {
   policy: PolicyName
@@ -313,6 +314,12 @@ export type ConversationSummary = {
 
 export type TokenSink = (delta: string) => void
 
+/** 节点级 structured 三态（O11）；仅 outcome/reason，不存 raw */
+export type StructuredStageRecord = {
+  outcome: 'success' | 'coerced' | 'fallback'
+  reason?: string
+}
+
 export interface NodeExecutionContext {
   userId: string
   companionId: string
@@ -330,6 +337,11 @@ export interface NodeExecutionContext {
    * 由 graph.stream 注入；可变字段 used 跨节点累计。
    */
   structuredRepairBudget?: { used: number; budget: number }
+  /**
+   * 整轮图共享的 structured 三态结局（O11）。
+   * 由 SharedNodeFactory.invokeStructured 写入；stream 收尾挂 spanAttrs。
+   */
+  structuredStages?: Record<string, StructuredStageRecord>
 }
 
 export interface CompanionState {

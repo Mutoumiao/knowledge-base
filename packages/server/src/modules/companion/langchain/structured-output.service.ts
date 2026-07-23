@@ -9,7 +9,12 @@ import {
 } from './structured-json-parse.js'
 import { tryConsumeRepair } from './structured-repair-budget.js'
 import { companionTokenCallbacks } from './token-usage.js'
-import type { StructuredOutputMethod, StructuredOutputOptions, WireApi } from './types.js'
+import type {
+  StructuredInvokeSuccess,
+  StructuredOutputMethod,
+  StructuredOutputOptions,
+  WireApi,
+} from './types.js'
 
 const KNOWN_CAPABILITY_400 =
   /Thinking mode does not support this tool_choice|response_format type is unavailable|tool_choice|json_schema|not support/i
@@ -69,7 +74,7 @@ export class StructuredOutputService {
     options: StructuredOutputOptions<T>,
     prompt: Runnable | string,
     signal?: AbortSignal,
-  ): Promise<T> {
+  ): Promise<StructuredInvokeSuccess<T>> {
     const started = Date.now()
     const methods = this.resolveMethods()
     let lastError: unknown = null
@@ -79,14 +84,19 @@ export class StructuredOutputService {
     for (const method of methods) {
       try {
         if (method === 'jsonMode') {
-          const data = await this.invokeJsonModeSelfManaged(options, promptText, signal, callbacks)
-          this.logger.log(
-            `[${options.name}] stage=success method=jsonMode ms=${Date.now() - started}`,
+          const result = await this.invokeJsonModeSelfManaged(
+            options,
+            promptText,
+            signal,
+            callbacks,
           )
-          return data
+          this.logger.log(
+            `[${options.name}] stage=success outcome=${result.outcome} method=jsonMode ms=${Date.now() - started}${result.reason ? ` reason=${result.reason}` : ''}`,
+          )
+          return result
         }
 
-        const data = await this.invokeWithStructuredOutputMethod(
+        const result = await this.invokeWithStructuredOutputMethod(
           method,
           options,
           promptText,
@@ -94,9 +104,9 @@ export class StructuredOutputService {
           callbacks,
         )
         this.logger.log(
-          `[${options.name}] stage=success method=${method} ms=${Date.now() - started}`,
+          `[${options.name}] stage=success outcome=${result.outcome} method=${method} ms=${Date.now() - started}`,
         )
-        return data
+        return result
       } catch (error) {
         lastError = error
         this.logMethodFailure(method, options.name, error)
@@ -108,7 +118,7 @@ export class StructuredOutputService {
       try {
         const repaired = await this.invokeRepair(options, promptText, lastError, signal, callbacks)
         this.logger.log(
-          `[${options.name}] stage=repair method=jsonMode ms=${Date.now() - started}`,
+          `[${options.name}] stage=repair outcome=${repaired.outcome} method=jsonMode ms=${Date.now() - started}${repaired.reason ? ` reason=${repaired.reason}` : ''}`,
         )
         return repaired
       } catch (error) {
@@ -120,7 +130,7 @@ export class StructuredOutputService {
     }
 
     this.logger.warn(
-      `[${options.name}] stage=fallback ms=${Date.now() - started} methods=${methods.join(',')}`,
+      `[${options.name}] stage=fallback outcome=fallback ms=${Date.now() - started} methods=${methods.join(',')}`,
     )
     throw new InternalServerErrorException(`结构化输出失败：${options.name}`)
   }
@@ -154,18 +164,23 @@ export class StructuredOutputService {
     promptText: string,
     signal: AbortSignal | undefined,
     callbacks: ReturnType<typeof companionTokenCallbacks>,
-  ): Promise<T> {
+  ): Promise<StructuredInvokeSuccess<T>> {
     const { content: raw, finishReason } = await this.invokeRawJsonObject(
       promptText,
       signal,
       callbacks,
     )
     const parsed = parseStructuredJson(raw, options.schema as z.ZodSchema<T>, options.name)
-    if (parsed.ok) return parsed.data
+    if (parsed.ok) {
+      return {
+        data: parsed.data,
+        outcome: parsed.coerced ? 'coerced' : 'success',
+        reason: parsed.coerceReasons?.join(',') || undefined,
+      }
+    }
 
     // finish_reason=length：优先走上层 repair（更清晰的截断语义）
-    const stage =
-      finishReason === 'length' ? 'truncated' : parsed.stage
+    const stage = finishReason === 'length' ? 'truncated' : parsed.stage
     if (finishReason === 'length') {
       this.logger.debug(
         `[${options.name}] jsonMode finish_reason=length parse=${parsed.stage}`,
@@ -220,7 +235,7 @@ export class StructuredOutputService {
     promptText: string,
     signal: AbortSignal | undefined,
     callbacks: ReturnType<typeof companionTokenCallbacks>,
-  ): Promise<T> {
+  ): Promise<StructuredInvokeSuccess<T>> {
     const model = this.llmConfigService.createLangChainChatModel({
       temperature: 0,
       maxTokens: DEFAULT_STRUCTURED_MAX_TOKENS,
@@ -230,7 +245,8 @@ export class StructuredOutputService {
       method,
     })
     const result = await structuredModel.invoke(promptText, { signal, callbacks })
-    return options.schema.parse(result)
+    // FC/jsonSchema 路径无 enum coerce；干净 Zod 通过记 success
+    return { data: options.schema.parse(result), outcome: 'success' }
   }
 
   private async invokeRepair<T>(
@@ -239,7 +255,7 @@ export class StructuredOutputService {
     lastError: unknown,
     signal: AbortSignal | undefined,
     callbacks: ReturnType<typeof companionTokenCallbacks>,
-  ): Promise<T> {
+  ): Promise<StructuredInvokeSuccess<T>> {
     const errMsg = lastError instanceof Error ? lastError.message : String(lastError ?? 'unknown')
     const repairPrompt = [
       originalPrompt,
@@ -257,7 +273,13 @@ export class StructuredOutputService {
       callbacks,
     )
     const parsed = parseStructuredJson(raw, options.schema as z.ZodSchema<T>, options.name)
-    if (parsed.ok) return parsed.data
+    if (parsed.ok) {
+      return {
+        data: parsed.data,
+        outcome: parsed.coerced ? 'coerced' : 'success',
+        reason: parsed.coerceReasons?.join(',') || undefined,
+      }
+    }
     const stage = finishReason === 'length' ? 'truncated' : parsed.stage
     throw new Error(`repair parse failed (${stage}): ${parsed.error}`)
   }

@@ -54,7 +54,12 @@ export class LangChainLlmService {
     prompt: string,
     signal?: AbortSignal,
   ): Promise<T> {
-    return this.structuredOutputService.invokeWithFallback(options, prompt, signal)
+    const result = await this.structuredOutputService.invokeWithFallback(
+      options,
+      prompt,
+      signal,
+    )
+    return result.data
   }
 
   async invoke(

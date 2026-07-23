@@ -248,6 +248,12 @@ Policy 的 sentence/question/advice 预算 MUST 写进 prompt 正文，不要只
 **正确**：落库前 `resolvedType = inferStrongMemoryTypeFromContent || llm || default`（`memory-extraction-node.resolveMemoryType`）。无强信号时 **保留 LLM type**，禁止 `inferMemoryTypeFromContent` 默认 `important_fact` 压扁分类。  
 **禁止**：`persistMemories` 热路径扫 active 记忆全量 type 自愈（会覆盖管理面手改、串行 N 次 update）。
 
+### intent enum 与 route 必联动
+
+**症状**：intent Zod 通过率上升，但 `roleplay` / 新 primary 仍落到粗默认；或删并 primary 后 ROUTE_RULES 残留 `when.intent` 永远不可达。  
+**原因**：route 用 **精确字符串**匹配 `intent.primary`；schema / EXAMPLE / alias / ROUTE_RULES 四源漂移。  
+**正确**：改 enum 面时同步 `ROUTE_RULES` + 单测；第一波优先 enum 值 alias + EXAMPLE 合法列表；未知值不得静默→`unclear`；三态写 `ctx.structuredStages` 再挂 `spanAttrs`。
+
 ### 其它既有陷阱
 
 - LLM 超时未设 fallback → 整条 pipeline 崩。

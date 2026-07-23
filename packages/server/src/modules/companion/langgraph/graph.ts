@@ -117,6 +117,11 @@ export class CompanionGraphService {
       used: 0,
       budget: DEFAULT_REPAIR_BUDGET_PER_TURN,
     }
+    // O11：三态结局 plain object；挂到外层 ctx 以便 stream 收尾写 spanAttrs
+    if (!ctx.structuredStages) {
+      ctx.structuredStages = {}
+    }
+    const structuredStages = ctx.structuredStages
     const rawStream = await this.graph.stream(initialState as never, {
       configurable: {
         companionName: ctx.companionName,
@@ -126,6 +131,7 @@ export class CompanionGraphService {
         companionGuardrails: ctx.companionGuardrails,
         companionDefaultPrompt: ctx.companionDefaultPrompt,
         structuredRepairBudget,
+        structuredStages,
       },
       signal: ctx.signal,
       streamMode: 'updates',
@@ -249,6 +255,7 @@ export class CompanionGraphService {
       structuredRepairBudget: conf.structuredRepairBudget as
         | StructuredRepairBudgetState
         | undefined,
+      structuredStages: conf.structuredStages as NodeExecutionContext['structuredStages'],
     }
     this.logger.log(`[graph] step=${name}_start`)
     const next = await node.execute(state, ctx)

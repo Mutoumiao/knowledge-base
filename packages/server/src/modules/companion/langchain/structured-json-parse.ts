@@ -33,6 +33,200 @@ export const STRUCTURED_FIELD_ALIASES: Record<string, string> = {
   reply_expectation: 'replyExpectation',
 }
 
+/**
+ * 有限 enum 值别名 → 合法字面量。
+ * 仅命中本表记 coerced；未知字符串不得静默映射（交给 Zod 失败 → repair/fallback）。
+ * 键统一小写比对。
+ */
+export const ENUM_VALUE_ALIASES: Record<string, Record<string, string>> = {
+  primary: {
+    chat: 'casual_chat',
+    small_talk: 'casual_chat',
+    smalltalk: 'casual_chat',
+    idle: 'casual_chat',
+    greeting: 'casual_chat',
+    support: 'emotional_support',
+    comfort: 'emotional_support',
+    vent: 'emotional_support',
+    emotional: 'emotional_support',
+    emotion_support: 'emotional_support',
+    advice: 'relationship_advice',
+    relationship: 'relationship_advice',
+    dating_advice: 'relationship_advice',
+    flirt: 'romantic_flirt',
+    romance: 'romantic_flirt',
+    romantic: 'romantic_flirt',
+    flirting: 'romantic_flirt',
+    presence: 'companionship_presence',
+    companionship: 'companionship_presence',
+    company: 'companionship_presence',
+    be_with: 'companionship_presence',
+    role_play: 'roleplay',
+    'role-play': 'roleplay',
+    role_playing: 'roleplay',
+    rp: 'roleplay',
+    life: 'life_sharing',
+    share: 'life_sharing',
+    sharing: 'life_sharing',
+    daily: 'life_sharing',
+    memory: 'memory_update',
+    remember: 'memory_update',
+    memory_write: 'memory_update',
+    preference: 'preference_setting',
+    preferences: 'preference_setting',
+    set_preference: 'preference_setting',
+    feedback: 'agent_feedback',
+    agent_fb: 'agent_feedback',
+    repair: 'conversation_repair',
+    misunderstanding: 'conversation_repair',
+    fix: 'conversation_repair',
+    plan: 'date_or_activity_planning',
+    planning: 'date_or_activity_planning',
+    activity: 'date_or_activity_planning',
+    creative: 'creative_request',
+    create: 'creative_request',
+    meta: 'meta_question',
+    about_you: 'meta_question',
+    self: 'meta_question',
+    unknown: 'unclear',
+    other: 'unclear',
+    none: 'unclear',
+  },
+  userNeed: {
+    comfort: 'be_comforted',
+    comforted: 'be_comforted',
+    heard: 'be_heard',
+    listen: 'be_heard',
+    advice: 'get_advice',
+    draft: 'get_reply_draft',
+    reply_draft: 'get_reply_draft',
+    play: 'play_along',
+    play_along: 'play_along',
+    connected: 'feel_connected',
+    connection: 'feel_connected',
+    boundary: 'set_boundary',
+    memory: 'update_memory',
+    remember: 'update_memory',
+    adjust: 'adjust_agent',
+    agent: 'adjust_agent',
+  },
+  requestedAgentAction: {
+    answer: 'answer_directly',
+    direct: 'answer_directly',
+    comfort: 'comfort_first',
+    ask: 'ask_follow_up',
+    follow_up: 'ask_follow_up',
+    draft: 'draft_message',
+    analyze: 'analyze_situation',
+    analysis: 'analyze_situation',
+    roleplay: 'roleplay_response',
+    role_play: 'roleplay_response',
+    remember: 'remember_fact',
+    memory: 'remember_fact',
+    adjust: 'adjust_style',
+    style: 'adjust_style',
+    repair: 'repair_misunderstanding',
+    continue: 'continue_topic',
+  },
+  // 次要：secondary 数组元素与 primary 共用同一 alias 表
+  // safety / emotion 常见乱写（有限）
+  safetyLevel: {
+    ok: 'safe',
+    normal: 'safe',
+    warn: 'caution',
+    warning: 'caution',
+    careful: 'caution',
+    blocked: 'block',
+    // 不映射 stop/danger/emergency：多义词，易把 caution/block 误抬到 crisis
+  },
+  boundaryAction: {
+    go: 'continue',
+    ok: 'continue',
+    soft: 'soft_boundary',
+    soft_refuse: 'soft_boundary',
+    refuse_soft: 'soft_boundary',
+    redir: 'redirect',
+    deny: 'refuse',
+    reject: 'refuse',
+    crisis: 'crisis_support',
+    hotline: 'crisis_support',
+  },
+  primaryEmotion: {
+    sadness: 'sad',
+    happiness: 'happy',
+    joy: 'happy',
+    anxiety: 'anxious',
+    anger: 'angry',
+    stress: 'stressed',
+    loneliness: 'lonely',
+    confusion: 'confused',
+    affection: 'affectionate',
+    play: 'playful',
+    tiredness: 'tired',
+  },
+}
+
+/** 与 primary 共用 alias 的字段 */
+const PRIMARY_LIKE_FIELDS = new Set(['primary', 'secondary'])
+
+function normalizeAliasKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, '_')
+}
+
+/**
+ * 对对象中已知 enum 字段做有限值映射。
+ * @returns coerced=true 仅当至少一次值被改写；reasons 形如 invalid_enum:primary
+ */
+export function applyEnumValueCoerce(input: Record<string, unknown>): {
+  value: Record<string, unknown>
+  coerced: boolean
+  reasons: string[]
+} {
+  const out: Record<string, unknown> = { ...input }
+  const reasons: string[] = []
+  let coerced = false
+
+  const coerceScalar = (field: string, raw: unknown): unknown => {
+    if (typeof raw !== 'string') return raw
+    const table =
+      ENUM_VALUE_ALIASES[field] ??
+      (PRIMARY_LIKE_FIELDS.has(field) ? ENUM_VALUE_ALIASES.primary : undefined)
+    if (!table) return raw
+    const key = normalizeAliasKey(raw)
+    // 已是合法字面量（表值侧）则不改
+    const canonicalValues = new Set(Object.values(table))
+    if (canonicalValues.has(raw) || canonicalValues.has(key)) {
+      // 若模型写了合法值的大小写变体且 key 能命中 value set 中的 key 形式
+      if (canonicalValues.has(raw)) return raw
+      if (canonicalValues.has(key) && key !== raw) {
+        coerced = true
+        reasons.push(`invalid_enum:${field}`)
+        return key
+      }
+      return raw
+    }
+    const mapped = table[key]
+    if (mapped != null && mapped !== raw) {
+      coerced = true
+      reasons.push(`invalid_enum:${field}`)
+      return mapped
+    }
+    return raw
+  }
+
+  for (const field of Object.keys(ENUM_VALUE_ALIASES)) {
+    if (!(field in out)) continue
+    out[field] = coerceScalar(field, out[field])
+  }
+
+  // secondary 不在 ENUM_VALUE_ALIASES keys，走 primary 表逐项 coerce
+  if (Array.isArray(out.secondary)) {
+    out.secondary = (out.secondary as unknown[]).map((item) => coerceScalar('primary', item))
+  }
+
+  return { value: out, coerced, reasons: [...new Set(reasons)] }
+}
+
 export function stripMarkdownFence(text: string): string {
   let t = text.trim()
   const fullFence = t.match(/^```(?:json|JSON)?\s*\r?\n?([\s\S]*?)\r?\n?```\s*$/)
@@ -171,12 +365,15 @@ export function messageContentToString(content: unknown): string {
   return JSON.stringify(content)
 }
 
+export type StructuredOutcome = 'success' | 'coerced' | 'fallback'
+
 export type ParseStructuredJsonResult<T> =
-  | { ok: true; data: T }
+  | { ok: true; data: T; coerced: boolean; coerceReasons?: string[] }
   | { ok: false; error: string; stage: 'empty' | 'extract' | 'json' | 'zod' }
 
 /**
- * 纯函数解析管线：去 fence → 括号平衡 → JSON.parse → 别名 → 节点缺省 → Zod
+ * 纯函数解析管线：去 fence → 括号平衡 → JSON.parse → 字段别名（静默）→ enum 值 coerce → 节点缺省 → Zod
+ * coerced **仅** enum 值 map 触发；字段名别名不置位。
  */
 export function parseStructuredJson<T>(
   raw: string,
@@ -216,7 +413,8 @@ export function parseStructuredJson<T>(
   }
 
   const withAliases = applyFieldAliases(parsed as Record<string, unknown>)
-  const withDefaults = applyNodeDefaults(nodeName, withAliases)
+  const { value: withEnums, coerced, reasons } = applyEnumValueCoerce(withAliases)
+  const withDefaults = applyNodeDefaults(nodeName, withEnums)
   const result = schema.safeParse(withDefaults)
   if (!result.success) {
     const issues = result.error.issues
@@ -225,5 +423,10 @@ export function parseStructuredJson<T>(
       .join('; ')
     return { ok: false, error: issues || 'zod validation failed', stage: 'zod' }
   }
-  return { ok: true, data: result.data }
+  return {
+    ok: true,
+    data: result.data,
+    coerced,
+    coerceReasons: coerced ? reasons : undefined,
+  }
 }

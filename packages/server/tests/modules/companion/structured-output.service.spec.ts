@@ -76,7 +76,8 @@ describe('StructuredOutputService jsonMode path', () => {
       'prompt',
     )
 
-    expect(result.safetyLevel).toBe('safe')
+    expect(result.data.safetyLevel).toBe('safe')
+    expect(result.outcome).toBe('success')
     expect(withStructuredOutput).not.toHaveBeenCalled()
     expect(invoke).toHaveBeenCalled()
     expect(llmConfigService.createLangChainChatModel).toHaveBeenCalledWith(
@@ -123,7 +124,8 @@ describe('StructuredOutputService jsonMode path', () => {
       { schema: conversationSafetySchema, name: 'safetyNode', repairBudget: budget },
       'p1',
     )
-    expect(ok.reason).toBe('repaired')
+    expect(ok.data.reason).toBe('repaired')
+    expect(ok.outcome).toBe('success')
     expect(budget.used).toBe(1)
 
     await expect(
@@ -222,8 +224,37 @@ describe('StructuredOutputService jsonMode path', () => {
       { schema: conversationSafetySchema, name: 'safetyNode', repairBudget: budget },
       'prompt',
     )
-    expect(ok.safetyLevel).toBe('safe')
+    expect(ok.data.safetyLevel).toBe('safe')
+    expect(ok.outcome).toBe('success')
     expect(budget.used).toBe(1)
     expect(invoke).toHaveBeenCalledTimes(2)
+  })
+
+  it('enum coerce yields outcome=coerced', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      content: JSON.stringify({
+        safetyLevel: 'ok', // alias → safe
+        category: 'normal',
+        boundaryAction: 'continue',
+        reason: 'ok',
+        responseGuidance: 'g',
+        allowMemoryExtraction: true,
+      }),
+    })
+    const service = new StructuredOutputService({
+      getModelId: () => 'deepseek-v4-flash',
+      createLangChainChatModel: vi.fn().mockReturnValue({
+        invoke,
+        withStructuredOutput: vi.fn(),
+      }),
+    } as never)
+
+    const ok = await service.invokeWithFallback(
+      { schema: conversationSafetySchema, name: 'safetyNode', repairBudget: { used: 0, budget: 1 } },
+      'prompt',
+    )
+    expect(ok.data.safetyLevel).toBe('safe')
+    expect(ok.outcome).toBe('coerced')
+    expect(ok.reason).toMatch(/invalid_enum/)
   })
 })

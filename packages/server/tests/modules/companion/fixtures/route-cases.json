@@ -53,5 +53,19 @@
     "expect": {
       "hasRoute": true
     }
+  },
+  {
+    "id": "UT-RT-roleplay-flow",
+    "description": "roleplay primary → roleplay_flow（priority1 补枝）",
+    "input": {
+      "intent": "roleplay",
+      "emotion": "playful",
+      "relationship": "comfortable_chat"
+    },
+    "expect": {
+      "route": "roleplay_flow",
+      "responseLength": "medium",
+      "shouldAskQuestion": true
+    }
   }
 ]

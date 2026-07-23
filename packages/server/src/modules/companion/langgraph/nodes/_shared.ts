@@ -71,7 +71,7 @@ export class SharedNodeFactory {
     const started = Date.now()
     try {
       // 成功/repair 日志由 StructuredOutputService 统一打（含 method/stage），此处避免双写
-      return (await this.structuredOutputService.invokeWithFallback(
+      const result = await this.structuredOutputService.invokeWithFallback(
         {
           schema,
           name: config.name,
@@ -79,11 +79,37 @@ export class SharedNodeFactory {
         } as never,
         promptText,
         ctx.signal,
-      )) as T
+      )
+      this.recordStructuredStage(ctx, config.name, {
+        outcome: result.outcome,
+        reason: result.reason,
+      })
+      return result.data as T
     } catch (_err) {
-      this.logger.warn(`[${config.name}] stage=fallback ms=${Date.now() - started}`)
+      const rawMsg = _err instanceof Error ? _err.message : 'unknown'
+      // 截断：禁止把 raw model content 整段塞进 obs
+      const reason = rawMsg.length > 160 ? `${rawMsg.slice(0, 160)}…` : rawMsg
+      this.logger.warn(
+        `[${config.name}] stage=fallback outcome=fallback ms=${Date.now() - started} reason=${reason}`,
+      )
+      this.recordStructuredStage(ctx, config.name, { outcome: 'fallback', reason })
       // 深拷贝：禁止污染模块级 fallback 单例（含 replyExpectation / secondary 等嵌套字段）
       return cloneFallbackValue(fallback)
+    }
+  }
+
+  /** O11：写入整轮共享 structuredStages（plain object，无累加器类） */
+  private recordStructuredStage(
+    ctx: NodeExecutionContext,
+    name: string,
+    record: { outcome: 'success' | 'coerced' | 'fallback'; reason?: string },
+  ): void {
+    if (!ctx.structuredStages) {
+      ctx.structuredStages = {}
+    }
+    ctx.structuredStages[name] = {
+      outcome: record.outcome,
+      ...(record.reason ? { reason: record.reason } : {}),
     }
   }
 

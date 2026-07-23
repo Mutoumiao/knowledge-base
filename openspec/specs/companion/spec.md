@@ -204,15 +204,18 @@ Companion 的 LLM 调用 SHALL 通过 LangChain ChatOpenAI 适配层完成。结
 #### Scenario: jsonMode 自管解析
 
 - **WHEN** 使用 json_object / jsonMode 主路径时
-- **THEN** 系统 MUST 取得模型返回的文本 content，并在 Zod 前执行归一：去除常见 markdown fence、提取首个括号平衡的 JSON 对象、应用有限字段别名
+- **THEN** 系统 MUST 取得模型返回的文本 content，并在 Zod 前执行归一：去除常见 markdown fence、提取首个括号平衡的 JSON 对象、应用有限字段别名、**有限 enum 值 coerce**
 - **AND** MUST NOT 静默接受括号不闭合的半截 JSON 作为成功结果
 - **AND** 系统 MUST 使用 schema 的 parse/safeParse 确保类型与 enum 合法
+- **AND** 若仅因 enum 值映射通过校验，outcome MUST 为 `coerced`；无 enum coerce 的干净通过 MUST 为 `success`
+- **AND** 字段名别名单独发生时 MUST NOT 仅因此记为 `coerced`
 
 #### Scenario: Prompt 必须含 json 与 EXAMPLE
 
 - **WHEN** 使用 `invokeStructured` 的节点构建 system 或 user prompt 时
 - **THEN** 文本 MUST 包含 `json` 字样（大小写不敏感亦可，但 MUST 明确要求 JSON 输出）
 - **AND** MUST 包含与目标 Zod schema **字段名一致**的 EXAMPLE JSON OUTPUT
+- **AND** intent EXAMPLE 中的 enum 字面量 MUST 属于当前 schema 合法集合
 - **AND** MUST 指示模型只输出 JSON 对象
 
 #### Scenario: 全局 repair 预算
@@ -221,12 +224,13 @@ Companion 的 LLM 调用 SHALL 通过 LangChain ChatOpenAI 适配层完成。结
 - **THEN** 系统 MAY 使用同一 json_object 约束发起 repair（附带错误摘要与 EXAMPLE）
 - **AND** 每一轮 Companion 管线执行中，所有结构化节点合计 repair LLM 调用 MUST NOT 超过 1 次
 - **AND** 预算耗尽或 repair 仍失败后 MUST 走节点 fallback，MUST NOT 无限重试
+- **AND** MUST NOT 为 intent 单独增加额外 repair 配额
 
 #### Scenario: 结构化最终失败不炸穿 HTTP 管线
 
 - **WHEN** StructuredOutputService 对某节点最终失败时
 - **THEN** SharedNodeFactory MUST 捕获失败并采用 fallback 副本继续图执行
-- **AND** 系统 MUST 记录可观测的 fallback 信号（日志至少 warn 级）
+- **AND** 系统 MUST 记录可观测的 fallback 信号（日志至少 warn 级，**且**回合级可聚合字段 outcome=`fallback`）
 - **AND** MUST NOT 因单节点结构化失败而默认中断整个 Companion HTTP/SSE 请求（安全硬中断语义仍仅由 safety.boundaryAction 决定）
 
 #### Scenario: 已知能力不匹配的日志级别
@@ -311,6 +315,19 @@ RouteNode SHALL 作为纯规则引擎，通过 intent / emotion / relationship �
 - **WHEN** intent 为 `memory_update`（用户要求记住某事）
 - **THEN** 系统 MUST 将 route 解析为 `memory_ack`（短确认、少建议）
 
+#### Scenario: intent primary 与规则表一致
+
+- **WHEN** 部署中的 `conversationIntentSchema.primary` 枚举集合变更时
+- **THEN** ROUTE_RULES 中所有 `when.intent` MUST 仍为合法 primary
+- **AND** 被合并掉的旧 primary MUST NOT 残留在规则表中
+- **AND** 对仍保留且产品期望可区分策略的 primary（如 `roleplay`），系统 SHOULD 提供至少一条可命中规则，避免长期仅靠无 intent 约束的兜底
+
+#### Scenario: roleplay 可命中专用 route
+
+- **WHEN** `intent.primary` 为 `roleplay`（schema 保留该值）时
+- **THEN** `ROUTE_RULES` MUST 提供至少一条可命中规则，将策略导向 `roleplay_flow`（或产品等价 route）
+- **AND** MUST NOT 仅依赖无 intent 约束的全局兜底作为唯一长期路径
+
 #### Scenario: 六字段规则输出
 
 - **WHEN** 分层匹配命中一条 ROUTE_RULES 时
@@ -320,6 +337,56 @@ RouteNode SHALL 作为纯规则引擎，通过 intent / emotion / relationship �
 
 - **WHEN** 相同的 (intent, emotion, relationship) 输入
 - **THEN** 系统 MUST 返回相同的路由结果（确定性查找，不依赖 LLM）
+
+---
+
+### Requirement: Structured 输出三态与可聚合观测
+
+系统 SHALL 对经 `SharedNodeFactory.invokeStructured`（或等价统一入口）的每个 structured 节点记录 **三态结局**，并写入既有 companion 回合可聚合字段（如 W2 `spanAttrs`），MUST NOT 仅依赖零散文案日志作为唯一信号。
+
+证据来源：
+- `packages/server/src/modules/companion/langchain/structured-json-parse.ts`
+- `packages/server/src/modules/companion/langchain/structured-output.service.ts`
+- `packages/server/src/modules/companion/langgraph/nodes/_shared.ts`
+- `packages/server/src/modules/companion/companion-chat-stream.service.ts`
+
+#### Scenario: 三态定义
+
+- **WHEN** 某 structured 节点完成一次结构化尝试时
+- **THEN** 结局 MUST 归为以下之一：
+  - `success`：归一与 Zod 通过，且 **未** 发生 **enum 值** coerce
+  - `coerced`：发生有限 **enum 值** 映射后通过 Zod，且 **未** 使用节点 fallback 默认副本
+  - `fallback`：结构化最终失败，采用 **fallback 独立副本** 继续执行
+- **AND** 既有字段名别名（key rename）MUST NOT 单独将结局标为 `coerced`
+
+#### Scenario: 统一入口同构记录
+
+- **WHEN** safety、intent、emotion、relationship、memory_candidate、memory_extraction 等经 `invokeStructured` 执行时
+- **THEN** 系统 MUST 按节点名记录 `{ outcome, reason? }`（可不含 method）
+- **AND** 回合结束时 MUST 写入既有观测通道可聚合字段（例如 `spanAttrs.structuredStages`）
+- **AND** MUST NOT 以新增告警邮件/Webhook 为验收条件
+- **AND** MUST NOT 要求为每个业务节点单独实现打点（应在共享入口完成）
+
+#### Scenario: intent 验收只压节点 fallback
+
+- **WHEN** 以 intent 结构化质量为对照指标时
+- **THEN** 统计 MUST 使用 intent 节点的 `fallback` 计数（或率）
+- **AND** `coerced` MUST 可单独统计，MUST NOT 单独作为否决 DoD 的硬条件
+- **AND** MUST NOT 要求 intent `success` 100% 或将 live fallback 写入 CI 硬门禁
+
+#### Scenario: 有限 enum 值 coerce
+
+- **WHEN** 模型返回的 JSON 中 enum 字段为已知近义/别名（实现维护的有限映射表）时
+- **THEN** 系统 MUST 映射到合法 enum 后再 Zod 校验
+- **AND** 该路径 MUST 记为 `coerced`（若仅因此映射而通过）
+- **AND** MUST NOT 将任意未知字符串静默映射为 `unclear` 而不记失败/fallback 路径（未知值应失败并进入 repair/fallback 策略）
+- **AND** 多义/歧义单 token（实现刻意未收录的别名）MUST NOT 被强行映射；应保持原值并由 Zod 失败进入 repair/fallback
+
+#### Scenario: fallback 可带短 reason
+
+- **WHEN** 结构化节点最终 fallback 时
+- **THEN** 系统 SHOULD 在 `structuredStages[name].reason` 记录短错误摘要（可截断）
+- **AND** MUST NOT 将完整模型 raw content 写入 obs reason
 
 ### Requirement: Policy Packs 策略包字段结构
 
