@@ -6,18 +6,25 @@
 > Change 已归档：`openspec/changes/archive/2026-07-23-companion-structured-json-output/`。  
 > 证据：`docs/report/companion-structured-json-output-preflight-result-2026-07-23.md`。  
 > **整产品结论报告（Complete vs Optimize + 建议 change 切分）：**  
-> `docs/report/companion-product-gap-and-optimize-2026-07-23.md`（立项 OpenSpec 时优先引用）。  
+> `docs/report/companion-product-gap-and-optimize-2026-07-23.md`  
+> **Grill 冻结（立项以报告 §11 为准）：** 本阶段完工线 = L1 七维；第一批 change = **C2 边界人设拒绝有正文 + O7/C5 验收最小可信**；O1/C3 仅失败触发；范围仅官方四角色。  
 > **不**阻塞结构化 jsonMode 发版；与 D12 门禁解耦。
 
-### 优先（影响路由 / 用户体感）
+### 本阶段 P0（Grill：第一批 change / L1 过线）
 
-- [ ] **intent enum 对齐**：DeepSeek 常输出非法 `requestedAgentAction` / `userNeed` 等 → intent **高 fallback**（D12 样本约 23/36）。收紧 prompt enum + 有限别名，或放宽 Zod 到可映射子集；目标降低 intent fallback，**不**以 100% Zod 为门禁
-- [ ] **违法硬拒有正文**：`safety_blocked`（如辱骂文案 / 网暴方法）现 SSE **error + 空正文**；评估改为「人设语气拒绝 + 可继续聊」的 soft 产品路径，避免 L1 BOUND 空流（危机 soft 已 OK，勿与自伤 soft 混改）
+- [ ] **违法/网暴等人设拒绝有正文**（C2）：正常助手轮入库；约束 generate；0 有害；可续聊（危机 soft 已 OK，对齐违法类）
+- [ ] **L1 验收最小可信**（O7+C5）：记忆检查关键词降权；人工七维可勾选表（含 D5 盲测位）
+- [ ] **L1 签字**（C1）：官方四角色七维全过 + 盲测 ≥70% + 本人签（不要求 auto 全绿）
 
-### 次优先（验收工具 / 成本）
+### 触发后才做（非默认）
 
-- [ ] **L1 记忆关键词启发式**：QING-MEM-R 等「关键词数」易误杀（语义已覆盖仍 FAIL）；改语义/裁判或放宽阈值，避免 auto gate 假 FAIL
-- [ ] **L1 人工七维**：本轮 L1 自动 `PENDING_HUMAN_REVIEW`；产品最终 PASS 仍依赖裁判包/人工，与结构化 D12 分开签字
+- [ ] **intent enum 对齐**（O1）：仅当七维失败且归因路由/策略钝化；**不**以 100% Zod 为门禁
+- [ ] **同会话记忆管线**（C3）：仅当人工证伪「真接不住」（非判据误杀）
+
+### 次优先 / L1 后
+
+- [ ] L1 自动层误杀继续打磨（在最小可信之后）
+- [ ] Care 自动投递、parity archive、emotion/relationship fallback 等（见报告 §11.3 Non-Goals）
 
 ### 明确推迟（原 change P1，默认不做）
 
