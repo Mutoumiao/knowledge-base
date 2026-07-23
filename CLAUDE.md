@@ -1,37 +1,37 @@
 # GoferBot
 
-GoferBot — 云端优先的 AI Workspace / Agent OS。基于 React + NestJS 的 Web 应用，支持文档管理、LLM 问答、RAG 检索增强、AI 伴侣聊天。
+GoferBot — 云端优先的 AI Workspace / Agent OS。基于 React + NestJS 的 Web 应用，支持文档管理、多 Provider LLM 问答、**Python Knowledge AI** 驱动的 RAG、以及 **LangGraph Companion** 伴侣聊天。
 
 ## 技术栈详情
 
-> **REFERENCE\_ONLY**: 各 package 的权威技术栈和编码约定请参见对应 `.trellis/spec/` 目录。
+> **REFERENCE_ONLY**: 各 package 的权威技术栈和编码约定请参见对应 `.trellis/spec/` 目录。
 
-| Layer          | Technology                               | Version                           |
-|----------------|------------------------------------------|-----------------------------------|
-| **前端框架**   | React + TanStack Start                   | React 19.x, TanStack Start latest |
-| **前端路由**   | TanStack Router                          | 1.132.x                           |
-| **UI 构建**    | Vite + Tailwind CSS                      | Vite 6.x, Tailwind 4.x            |
-| **状态管理**   | Zustand                                  | 5.x                               |
-| **请求库**     | alova (CRUD) + @ant-design/x-sdk (SSE)   | alova latest, XRequest SSE        |
-| **UI 组件**    | shadcn/ui + @ant-design/x (Chat)         | -                                 |
-| **AI Chat UI** | @ant-design/x / @ant-design/x-markdown   | Bubble / Sender / XMarkdown       |
-| **后端框架**   | NestJS + Fastify                         | NestJS 10.x, Fastify 4.x          |
-| **数据库**     | PostgreSQL + pgvector                    | PG 16                             |
-| **ORM**        | Prisma                                   | 5.x                               |
-| **向量存储**   | pgvector                                 | -                                 |
-| **缓存/队列**  | Redis + BullMQ                           | Redis 7, BullMQ 5.x               |
-| **对象存储**   | MinIO (S3兼容)                           | -                                 |
-| **AI SDK**     | LangChain + @ant-design/x                | LangChain 1.x                     |
-| **AI 工作流**  | LangGraph StateGraph                     | -                                 |
-| **知识 AI**    | Python FastAPI Knowledge AI + HTTP API Rerank | services/knowledge-ai-service     |
-| **数据校验**   | Zod                                      | 3.x                               |
-| **测试**       | Vitest + Playwright                      | Vitest 4.x, Playwright latest     |
-| **包管理**     | pnpm                                     | -                                 |
-| **格式/Lint**  | Biome                                    | 2.4                               |
+| Layer | Technology | Version / 说明 |
+|-------|------------|----------------|
+| **前端框架** | React + TanStack Start | React 19.x, TanStack Start latest |
+| **前端路由** | TanStack Router | 1.132.x |
+| **UI 构建** | Vite + Tailwind CSS | Vite 8.x, Tailwind 4.x |
+| **状态管理** | Zustand | 5.x |
+| **请求库** | alova (CRUD) + AI SDK SSE | alova；`ai` / `@ai-sdk/react` `useChat` + 自定义 Transport |
+| **UI 组件** | shadcn/ui + Radix | Chat Composer / 列表自研组件 |
+| **Markdown** | @ant-design/x-markdown | `XMarkdown` streaming |
+| **后端框架** | NestJS + Fastify | NestJS 10.x, Fastify 4.x |
+| **数据库** | PostgreSQL + pgvector | PG 16 |
+| **全文检索** | Elasticsearch | BM25（Knowledge AI 侧） |
+| **ORM** | Prisma | 5.x |
+| **缓存/队列** | Redis + BullMQ | Redis 7, BullMQ 5.x |
+| **对象存储** | MinIO (S3 兼容) | - |
+| **AI SDK（服务端）** | LangChain + LangGraph | LangChain 1.x, StateGraph |
+| **知识 AI** | Python FastAPI + uv | `services/knowledge-ai-service`（索引 / 混合检索 / 问答 SSE） |
+| **可观测** | ObservabilityTurn + 可选 Langfuse | Nest 聚合；Admin Dashboard 观测 Hub |
+| **数据校验** | Zod | data 包 3.x；server 4.x |
+| **测试** | Vitest + Playwright | Vitest 4.x, Playwright latest |
+| **包管理** | pnpm（TS monorepo）+ uv（Python） | - |
+| **格式/Lint** | Biome | 2.5.x |
 
 ## Agent 核心约束
 
-1. **先思后码**：不确定就问，规则冲突时优先"简单至上"
+1. **先思后码**：不确定就问，规则冲突时优先「简单至上」
 2. **外科手术式修改**：只改必要处，顺手优化标 `#adjacent-fix`
 3. **Token 预算**：单任务≤8k，超 80% 暂停压缩，超 95% 终止
 4. **落笔先阅读**：通读导出接口、调用方、公共工具；代码探索优先用 codegraph
@@ -42,176 +42,226 @@ GoferBot — 云端优先的 AI Workspace / Agent OS。基于 React + NestJS 的
 
 ```
 ├── packages/
-│   ├── web/           # React 前端（主前端）
-│   │   ├── features/chat/         # Chat 聊天模块（@ant-design/x-sdk SSE）
-│   │   ├── features/companion/    # AI Companion 模块（useChat + Transport + 打字机动画）
-│   │   ├── features/KnowledgeBase/# 知识库管理
-│   │   ├── overlays/              # Portal 弹窗系统（4层架构：类型 → Store → Service → Portal）
-│   │   ├── stores/                # 全局 State（auth/settings/workspace/conversation）
-│   │   └── api/                   # API 客户端（alova + XRequest SSE）
-│   ├── admin/         # React 管理后台（独立前端应用）
-│   │   ├── features/auth/         # 登录/RSA加密/会话恢复
-│   │   ├── features/users/        # 用户管理
-│   │   ├── features/roles/        # 角色权限管理（PermissionMatrix）
-│   │   ├── features/audit/        # 审计日志
-│   │   ├── features/dashboard/    # 仪表盘统计
-│   │   └── utils/server.ts        # alova 实例 + Token 自动刷新订阅者队列
-│   ├── server/        # NestJS API 服务端
-│   │   ├── modules/chat/          # Chat SSE + StreamFinalize
-│   │   ├── modules/companion/     # Companion LangGraph Pipeline (11节点)
-│   │   ├── modules/knowledge-base/# 知识库 CRUD
-│   │   ├── modules/auth/          # 认证 + Token Rotation
-│   │   ├── modules/admin/         # 管理后台 API
-│   │   ├── modules/storage/       # S3 存储（4层架构：Controller→Service→Adapter→MinIO）
-│   │   ├── modules/settings/      # 用户设置
-│   │   ├── modules/health/        # 健康检查（/health + /health/live）
-│   │   ├── common/                # 安全中间件、SseResponseHelper、全局异常过滤器
-│   │   └── processors/knowledge-ai/  # Nest → Knowledge AI HTTP Client（索引/流式问答）
-│   └── data/          # 共享数据契约（Zod schemas、chatMessagesChunkSchema）
+│   ├── web/              # React 主前端
+│   │   ├── features/chat/          # Knowledge Chat（AI SDK useChat + KnowledgeChatTransport）
+│   │   ├── features/companion/     # Companion（useChat + CompanionChatTransport）
+│   │   ├── features/KnowledgeBase/ # 知识库 / 上传 / 回收站相关 UI
+│   │   ├── features/settings/      # 用户设置 / Provider
+│   │   ├── overlays/               # Portal 弹窗（types → store → service → host）
+│   │   ├── stores/                 # 全局 auth / settings / conversation
+│   │   └── api/                    # alova CRUD 客户端
+│   ├── admin/            # 管理后台（独立前端）
+│   │   ├── features/auth|users|roles|audit|dashboard
+│   │   ├── features/companions|invitations|model-providers
+│   │   ├── features/module-settings|observability|profile
+│   │   └── utils/                  # alova + Token 刷新订阅者队列
+│   ├── server/           # NestJS API
+│   │   ├── auth/                   # 认证（JWT 双令牌、Rotation、App/Spider 守卫）
+│   │   ├── modules/
+│   │   │   ├── chat/               # Chat SSE + 多 KB 问答编排
+│   │   │   ├── companion/          # LangGraph Pipeline（11 节点）+ Care/Memory/Admin
+│   │   │   ├── knowledge-base/     # KB / Folder / Document CRUD + 清理
+│   │   │   ├── admin/              # RBAC、审计、邀请码、Dashboard 观测
+│   │   │   ├── observability/      # ObservabilityTurn / Langfuse 适配
+│   │   │   ├── session|settings|user|health|permission
+│   │   ├── processors/
+│   │   │   ├── knowledge-ai/       # Nest → Knowledge AI HTTP Client
+│   │   │   ├── queue/              # BullMQ IndexingWorker / finalize
+│   │   │   ├── storage/            # MinIO 存储抽象
+│   │   │   ├── parser/             # 文档解析 → 纯文本交接
+│   │   │   └── database/           # PrismaService
+│   │   └── prisma/                 # schema + migrations + seed
+│   └── data/             # 共享 Zod schemas / 权限常量 / 类型
 ├── services/
-│   └── knowledge-ai-service/  # Python 知识域（pgvector∥ES、/index /stream）
-├── e2e/               # 浏览器 E2E 测试（Playwright POM + Mock 双模式 + goferbot_e2e DB）
-├── tests/             # 测试（unit/integration/e2e-api）
-├── docs/              # 文档（guide/prd/adrs/design/discovery-report.md）
-├── BACKLOG.md         # 待办（open / in-progress）
-└── CHANGELOG.md       # 完成日志（closed）
+│   └── knowledge-ai-service/       # Python 知识域（FastAPI + uv）
+│       ├── indexing / retrieval / generation / understanding
+│       ├── infrastructure (PG knowledge schema + ES)
+│       └── docker-compose.knowledge.yml  # ES + knowledge-ai
+├── scripts/
+│   ├── prod-acceptance/            # RAG / Companion L1 / 观测 HTTP 验收
+│   └── *.ts|cjs|mjs                # 端口清理、测库清理、手验脚本
+├── evals/                # Companion / RAG 轻量评测用例
+├── e2e/                  # Playwright 浏览器 E2E
+├── tests/                # 根级 integration / e2e-api 配置入口
+├── docs/                 # guide / discovery / handoff / report
+├── openspec/             # Business Knowledge（WHAT）
+├── .trellis/             # Development Knowledge（HOW）+ tasks
+├── BACKLOG.md
+└── CHANGELOG.md
 ```
 
 ## 架构亮点
 
-> 以下为快速 Orientation Summary。详细开发模式见 Trellis 指南，业务规范见 OpenSpec specs。
+> 快速 Orientation。详细开发模式见 Trellis，业务规范见 OpenSpec。
 
-| 系统                 | 架构要点                                                                                                              |
-|----------------------|-----------------------------------------------------------------------------------------------------------------------|
-| **SSE 流式**         | 双轨并行 — Chat 用 `@ant-design/x-sdk` (XMarkdown streaming)，Companion 用 `useChat` + `CompanionChatTransport` 映射 Nest SSE (打字机动画)  |
-| **RBAC 守卫**        | Admin 三层权限 — `beforeLoad` 路由守卫 → `useMenuConfig` 菜单过滤 → `PermissionMatrix` 组件级，19 权限码 + 3 预置角色 |
-| **Overlay Portal**   | 4 层命令式架构 — `openDialog(Comp, props)` → Promise<T>，createPortal 到 body，11 个预置弹窗                          |
-| **Token 刷新**       | 订阅者队列模式 — `isRefreshing` 互斥锁，并发 401 聚合为单次 refresh                                                   |
-| **RAG / Knowledge AI** | Nest 编排 + Python Knowledge AI — L1 Merged → Hybrid(pgvector∥ES) → RRF → Parent → API Rerank；Nest 不双跑本地 RAG |
-| **Companion 工作流** | LangGraph StateGraph — 11 节点 + 3 条件路由 + 18 状态字段                                                             |
-| **测试架构**         | 4 层金字塔 — Unit(vitest) → Integration(vitest+NestJS) → E2E API(vitest+axios) → E2E Browser(Playwright)              |
+| 系统 | 架构要点 |
+|------|----------|
+| **SSE 流式** | **双轨同范式**：Chat 用 `KnowledgeChatTransport`，Companion 用 `CompanionChatTransport`；均为 AI SDK `useChat` 映射 Nest SSE。Markdown 用 `XMarkdown`。**已弃用** `@ant-design/x-sdk` / `useXChat` |
+| **知识域边界** | Nest 只做编排 / 鉴权 / 解析 / 队列；**索引、混合检索、Rerank、知识生成**在 Python Knowledge AI。Companion **不**走 Knowledge AI |
+| **RAG 管线** | L1 Must-Merged → Hybrid(pgvector ∥ ES BM25) → RRF → Parent → API Rerank（失败降级）→ Context → Generation；空检索 strict（`retrieval_empty`，不编造） |
+| **Companion 工作流** | LangGraph StateGraph — 11 节点（safety→…→memory_extraction）+ 条件路由；结构化 JSON 由 `StructuredOutputService` 方法链 + repair 预算 |
+| **RBAC** | Admin 三层：`beforeLoad` → 菜单过滤 → `PermissionMatrix`；**23** 权限码；预置 `super_admin` / `admin` / `user` |
+| **Overlay Portal** | 命令式 `openDialog` → Promise；createPortal 到 body |
+| **Token 刷新** | 订阅者队列 + `isRefreshing` 互斥，并发 401 聚合为单次 refresh |
+| **观测** | `ObservabilityTurn` + CompanionObsEvent；Admin Dashboard KPI / 详页；可选 Langfuse |
+| **测试金字塔** | Unit(vitest) → Integration → E2E API → E2E Browser；另有 `evals/` 与 `scripts/prod-acceptance` |
 
 ## 常用命令
 
 ```bash
-pnpm dev              # 同时启动前后端
-pnpm dev:web          # 只启动前端
-pnpm dev:server       # 只启动后端（watch）
-pnpm type-check       # TypeScript 类型检查
-pnpm test             # 单元测试（vitest）
-pnpm test:integration # 模块级集成测试（22 specs）
-pnpm test:e2e:api     # HTTP API E2E
-pnpm test:e2e         # 浏览器 E2E（Playwright，Chromium serial）
-pnpm test:all         # 全量回归
-pnpm format           # biome 格式化（写入）
-pnpm format:check     # biome 格式化检查（不写入，CI 用）
-pnpm format:unsafe    # biome 格式化（含 unsafe 修复）
-pnpm lint             # biome 仅 lint
-pnpm check            # biome 检查（format + lint + assist）
-pnpm check:fix        # biome 检查并应用安全修复
-pnpm check:unsafe     # biome 检查并应用全部修复
-pnpm check:staged     # biome 仅处理 git 暂存文件
-pnpm check:changed    # biome 仅处理 VCS 变更文件
-pnpm check:ci         # biome CI 模式（不写入，错误即非零退出）
+# 开发
+pnpm infra:up          # Docker：PG / Redis / MinIO
+pnpm dev               # data + server + web（会先 kill 端口）
+pnpm dev:web
+pnpm dev:server
+pnpm dev:admin
+
+# Knowledge AI（另开终端；需 ES，见 services/knowledge-ai-service/README.md）
+cd services/knowledge-ai-service && uv sync --all-extras && uv run knowledge-ai
+# 或：docker compose -f services/knowledge-ai-service/docker-compose.knowledge.yml up -d --build
+
+# 质量
+pnpm type-check
+pnpm test              # vitest（根配置）
+pnpm test:unit
+pnpm test:integration
+pnpm test:e2e:api
+pnpm test:e2e          # Playwright
+pnpm test:e2e:web
+pnpm test:e2e:admin
+pnpm test:all
+pnpm test:eval         # evals/run.mjs
+
+# 格式 / Lint（Biome）
+pnpm format            # 写入
+pnpm format:check
+pnpm lint
+pnpm check
+pnpm check:fix
+pnpm check:staged
+pnpm check:changed
+pnpm check:ci
+
+# 基建
+pnpm infra:down
+pnpm infra:logs
+pnpm db:cleanup        # 清理集成测试库
 ```
 
 ## 权威知识索引
 
-> **AI Knowledge Architecture**：本项目知识体系按知识类型划分（详见 [openspec/README.md](openspec/README.md)）。
-> - **Business Knowledge (WHAT)** → `openspec/specs/`：业务规则、API契约、架构定义、验收标准。唯一权威源。
-> - **Development Knowledge (HOW)** → `.trellis/spec/`：编码约定、模式、最佳实践、测试策略、审查清单、常见陷阱。唯一权威源。
-> - **Workspace Rules (ALWAYS)** → `.trae/rules/`：IDE 始终注入的强制约束。
-> - **Authority Principle**：每条知识仅有一个 Source of Truth。Reference > Copy。
-> - **Golden Rule**：实现方式改变后仍然有效 → OpenSpec；否则 → Trellis；始终强制 → Rules。
+> **AI Knowledge Architecture**（详见 [openspec/README.md](openspec/README.md)）：
+> - **Business Knowledge (WHAT)** → `openspec/specs/`：业务规则、API 契约、验收标准
+> - **Development Knowledge (HOW)** → `.trellis/spec/`：编码约定、测试策略、陷阱
+> - **Workspace Rules (ALWAYS)** → `.trae/rules/`
+> - **Golden Rule**：实现变了仍有效 → OpenSpec；否则 → Trellis；始终强制 → Rules
 >
-> **Progressive Knowledge Loading**：AI Agent 不要预加载全部规范。
-> - **Workflow A (Business Change)**：OpenSpec 工具链自动加载 change artifacts（proposal/design/tasks/specs），无需 before-dev；Trellis 指南按需跳转
-> - **Workflow B (Development Task)**：从对应 package 的 Trellis index.md（Navigation Hub）进入，按 Pre-Development Checklist 加载通用指南和模块指南；需要业务规则时跳转 OpenSpec
+> **Progressive Loading**：不要预加载全部规范。
+> - **Workflow A（改业务）**：OpenSpec change artifacts → Apply → Check → Archive
+> - **Workflow B（纯开发）**：Trellis package `index.md` → 模块指南 → 需要时再跳 OpenSpec
 
 ### 项目全局
 
-| 文档                                     | 内容                                                                      |
-|------------------------------------------|---------------------------------------------------------------------------|
-| [openspec/README.md](openspec/README.md) | AI Knowledge Architecture 导航入口（架构总览 + 导航表）                   |
-| [docs/guide/](docs/guide/)               | 知识架构参考文档（权威源原则、工作流、知识加载、沉淀规则、spec 更新指南） |
-| [Discovery Report](docs/discovery-report.md) | 项目全局认知基线（21 章节，全模块覆盖）        |
-| `.trae/workflow.md`                      | 开发阶段流程、任务创建时机、Skill 路由                                    |
-| `.trellis/workspace/`                    | 开发者日志和会话追踪                                                      |
-| `.trellis/tasks/`                        | 活跃/已归档任务（PRD、research、jsonl 上下文）                            |
+| 文档 | 内容 |
+|------|------|
+| [openspec/README.md](openspec/README.md) | 知识架构导航 |
+| [docs/guide/](docs/guide/) | 权威源原则、工作流、渐进加载、沉淀规则 |
+| [docs/discovery-report.md](docs/discovery-report.md) | 全局认知基线（历史盘点，细节以代码与 OpenSpec 为准） |
+| [services/knowledge-ai-service/README.md](services/knowledge-ai-service/README.md) | Knowledge AI 本地 / Docker / API |
+| [scripts/README.md](scripts/README.md) | 仓库脚本与 prod-acceptance 约定 |
+| `.trellis/tasks/` | 活跃 / 已归档开发任务 |
+| `.trellis/workspace/` | 会话日志 |
 
 ### 编码规范入口（HOW — Trellis）
 
-> 每个 package 的 Trellis index.md 是**渐进加载入口**：先查 index.md 找到对应模块开发指南，再按需跳 OpenSpec。
-
-| Package            | Trellis 入口（含通用指南 + 模块开发指南 + OpenSpec 映射）                      |
-|--------------------|--------------------------------------------------------------------------------|
-| `packages/web/`    | [.trellis/spec/web/frontend/index.md](.trellis/spec/web/frontend/index.md)     |
-| `packages/admin/`  | [.trellis/spec/admin/frontend/index.md](.trellis/spec/admin/frontend/index.md) |
+| Package / 域 | Trellis 入口 |
+|--------------|--------------|
+| `packages/web/` | [.trellis/spec/web/frontend/index.md](.trellis/spec/web/frontend/index.md) |
+| `packages/admin/` | [.trellis/spec/admin/frontend/index.md](.trellis/spec/admin/frontend/index.md) |
 | `packages/server/` | [.trellis/spec/server/backend/index.md](.trellis/spec/server/backend/index.md) |
-| `packages/data/`   | [.trellis/spec/data/frontend/index.md](.trellis/spec/data/frontend/index.md)   |
-| 跨包思维方法论     | [.trellis/spec/guides/index.md](.trellis/spec/guides/index.md)                 |
+| `packages/data/` | [.trellis/spec/data/frontend/index.md](.trellis/spec/data/frontend/index.md) |
+| Companion 管线 | [.trellis/spec/server/backend/companion-pipeline.md](.trellis/spec/server/backend/companion-pipeline.md) |
+| Knowledge AI 接线 | [.trellis/spec/server/backend/knowledge-ai-service.md](.trellis/spec/server/backend/knowledge-ai-service.md) |
+| 跨包思维 | [.trellis/spec/guides/index.md](.trellis/spec/guides/index.md) |
 
 ### 功能规范（WHAT — OpenSpec）
 
-> OpenSpec 是业务知识唯一权威源。以下 capability spec.md 按需查阅，不要预加载。
+> 按需查阅，勿预加载。
 
-| Package            | OpenSpec capability                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-|--------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `packages/server/` | [auth](openspec/specs/auth/spec.md)、[chat](openspec/specs/chat/spec.md)、[companion](openspec/specs/companion/spec.md)、[companion-persona](openspec/specs/companion-persona/spec.md)、[companion-care](openspec/specs/companion-care/spec.md)、[knowledge-ai](openspec/specs/knowledge-ai/spec.md)、[rag](openspec/specs/rag/spec.md)、[queue](openspec/specs/queue/spec.md)、[admin](openspec/specs/admin/spec.md)、[knowledge-base](openspec/specs/knowledge-base/spec.md)、[document](openspec/specs/document/spec.md)、[session](openspec/specs/session/spec.md)、[settings](openspec/specs/settings/spec.md)、[user](openspec/specs/user/spec.md)、[document-lifecycle](openspec/specs/knowledge-base/document-lifecycle.md) |
-| `packages/admin/`  | [admin](openspec/specs/admin/spec.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `packages/web/`    | [auth](openspec/specs/auth/spec.md)、[chat](openspec/specs/chat/spec.md)、[companion](openspec/specs/companion/spec.md)、[companion-persona](openspec/specs/companion-persona/spec.md)、[companion-care](openspec/specs/companion-care/spec.md)、[session](openspec/specs/session/spec.md)、[settings](openspec/specs/settings/spec.md)                                                                                                                                                                                                                                                                                                                                        |
-| `packages/data/`   | [chat](openspec/specs/chat/spec.md)、[companion](openspec/specs/companion/spec.md)、[document](openspec/specs/document/spec.md)、[session](openspec/specs/session/spec.md)、[settings](openspec/specs/settings/spec.md)、[user](openspec/specs/user/spec.md)                                                                                                                                                                                                                                                                                           |
+| 域 | OpenSpec capability |
+|----|---------------------|
+| **server 核心** | [auth](openspec/specs/auth/spec.md)、[chat](openspec/specs/chat/spec.md)、[session](openspec/specs/session/spec.md)、[settings](openspec/specs/settings/spec.md)、[user](openspec/specs/user/spec.md)、[queue](openspec/specs/queue/spec.md) |
+| **Companion** | [companion](openspec/specs/companion/spec.md)、[companion-persona](openspec/specs/companion-persona/spec.md)、[companion-care](openspec/specs/companion-care/spec.md) |
+| **知识 / RAG** | [knowledge-ai](openspec/specs/knowledge-ai/spec.md)、[rag](openspec/specs/rag/spec.md)、[knowledge-base](openspec/specs/knowledge-base/spec.md)、[document](openspec/specs/document/spec.md)、[document-lifecycle](openspec/specs/knowledge-base/document-lifecycle.md) |
+| **Admin** | [admin](openspec/specs/admin/spec.md)、[admin-observability](openspec/specs/admin-observability/spec.md)、[invitation-codes](openspec/specs/invitation-codes/spec.md) |
 
-### 持续演进机制（双流程）
+### 持续演进机制
 
 > 详见 [docs/guide/knowledge-workflow.md](docs/guide/knowledge-workflow.md)。
 
-- **Workflow A: Business Change**（改变系统"是什么"）：Grill → OpenSpec Explore → Propose → Review → Apply（实现）→ Trellis Check → Update Spec → Archive。适用于新增功能、业务重设计、改变外部行为的架构演进
-- **Workflow B: Development Task**（不改变业务规格）：Brainstorm（可选）→ Trellis Before Dev → 开发 → Trellis Check → Update Spec。适用于 Bug 修复、纯重构、性能优化、测试补充
-- **判断方法**：是否改变业务规则/API契约/验收标准？是 → A；否 → B。Bug 修复中发现业务规则本身有问题（代码符合 spec 但行为不对）→ 升级到 A
+- **Workflow A**：Grill → OpenSpec Explore → Propose → Apply → Trellis Check → Update Spec → Archive
+- **Workflow B**：Brainstorm（可选）→ Trellis Before Dev → 开发 → Trellis Check → Update Spec
+- **判断**：是否改变业务规则 / API 契约 / 验收标准？是 → A；否 → B
 
 ### Spec 更新参考
 
-> 调用 `trellis-update-spec` / `openspec-propose` 时的决策指南，详见 [docs/guide/spec-update-reference.md](docs/guide/spec-update-reference.md)。
+> [docs/guide/spec-update-reference.md](docs/guide/spec-update-reference.md)
 
 ### 环境变量
 
-- 根目录 `.env.example`：项目唯一的完整环境变量模板
-- 加载顺序（服务端）：`packages/server/.env` → 根目录 `.env`，后加载的覆盖先加载的同名变量
-- 配置管理指南：`docs/guide/backend/configuration-guide.md`
+| 文件 | 职责 |
+|------|------|
+| 根目录 `.env.example` | Docker-Infra + Shared（DB / Redis / MinIO 等） |
+| `packages/server/.env.example` | Server-Only（JWT、端口、CORS、`KNOWLEDGE_AI_*` 等） |
+| `packages/web` / `admin` 的 `.env.example` | 前端 Vite 变量 |
+| `services/knowledge-ai-service/.env.example` | Python 服务令牌、ES、embedding 维等 |
+
+- 服务端加载顺序：`packages/server/.env` → 根目录 `.env`（后者覆盖同名）
+- Nest 连 Knowledge AI 权威变量：`KNOWLEDGE_AI_BASE_URL`（`KNOWLEDGE_AI_URL` 为遗留别名）
+- 运维观测补充：[docs/guide/backend/observability-ops.md](docs/guide/backend/observability-ops.md)
 
 ## 数据库模型（核心）
 
-> Orientation Summary。完整 schema 见 `packages/server/prisma/schema.prisma`，业务规则见对应 OpenSpec specs。
+> Orientation Summary。完整 schema：`packages/server/prisma/schema.prisma`。
 
 ```
-User ──→ Session (Chat)
+User ──→ AuthSession / RefreshToken
   │
-  ├──→ KnowledgeBase ──→ Folder ──→ Document ──→ Chunk
-  │                                                 ↓
-  ├──→ Setting                                    (pgvector)
+  ├──→ KnowledgeBase ──→ Folder ──→ Document ──→ Chunk (业务元数据；向量/ES 索引在 Knowledge AI)
+  ├──→ Setting / Application / SystemFlag
+  ├──→ Session (Chat) ──→ Message
   │
-  ├──→ Companion ──→ Conversation ──→ Message
-  │                     ↓
-  │                   Memory (preference/boundary/relationship_goal/conversation_style/important_fact)
+  ├──→ Companion (source: system|user)
+  │       ├── CompanionConversation ──→ CompanionMessage
+  │       ├── CompanionMemory (5 types)
+  │       ├── CompanionMessageFeedback
+  │       ├── CompanionCarePlan / CompanionCareEvent
+  │       └── CompanionObsEvent
   │
-  └──→ Role ──→ Permission
-         ↓
-       AuditLog
+  ├──→ GroupChat ──→ GroupChatMember / GroupChatMessage
+  ├──→ InvitationCode
+  ├──→ ObservabilityTurn
+  └──→ Role ──→ Permission (via RolePermission)
+                 └── AdminAuditLog
 ```
 
-- **User**: 用户账户（email, password, role, mustChangePassword）
-- **Role**: 角色（name, permissions 数组），预置 SUPER\_ADMIN(18) / ADMIN(14) / USER(2)
-- **Permission**: 权限码（19 个，如 `users:read`, `roles:create` 等）
-- **AuditLog**: 管理操作审计日志（操作类型、目标资源、时间戳）
-- **KnowledgeBase**: 知识库（属于用户）
-- **Folder**: 文件夹（树形结构，支持嵌套）
-- **Document**: 文档（存储在 MinIO，metadata 在 DB）
-- **Chunk**: 文档切片（用于 RAG 检索，向量存储在 pgvector）
-- **Session**: 聊天会话（关联知识库）
-- **Companion**: AI 伴侣（personality, tone, boundaries, guardrailsPrompt, defaultPrompt, backgroundStory, openingMessage, avatarKey, status: draft/published/archived）
-- **Conversation**: 伴侣会话（关联 Companion + User）
-- **Message**: 消息（role: user/assistant, content, feedback）
-- **Memory**: 伴侣记忆（5 种类型：preference/boundary/relationship\_goal/conversation\_style/important\_fact）
-- **Setting**: 用户设置
+- **User / AuthSession / RefreshToken**：账户与会话令牌
+- **Role / Permission / RolePermission**：Admin RBAC（23 权限码；`super_admin`/`admin` 默认全量，`user` 空）
+- **InvitationCode**：邀请码注册
+- **KnowledgeBase / Folder / Document / Chunk**：知识库树与文档元数据；**向量与 ES 切片由 Knowledge AI 维护**（`knowledge` schema）
+- **Session / Message**：Knowledge Chat 会话
+- **Companion\***：内置/用户伴侣、对话、记忆、反馈、关怀、观测侧信道
+- **ObservabilityTurn**：跨模块轮次观测聚合
+- **Setting / Application\***：用户与系统 Provider 配置
+- **AdminAuditLog**：管理操作审计
 
+## 关键入口（按任务跳转）
+
+| 我想… | 先看 |
+|-------|------|
+| 改 Companion 节点 / 路由 / 结构化输出 | OpenSpec companion + Trellis companion-pipeline + `langgraph/` |
+| 改知识问答 / 索引 / 召回 | OpenSpec knowledge-ai + Trellis knowledge-ai-service + `processors/knowledge-ai` + Python 服务 |
+| 改 Web Chat / Companion 流式 UI | Trellis sse-streaming-architecture + 对应 `*-chat-transport.ts` |
+| 改 Admin 权限 / 观测大盘 | OpenSpec admin / admin-observability + admin Trellis |
+| 加共享 DTO / 权限码 | `packages/data` + 对应 OpenSpec |
+| 跑 L1 / 生产向验收 | `scripts/prod-acceptance/README.md` |
