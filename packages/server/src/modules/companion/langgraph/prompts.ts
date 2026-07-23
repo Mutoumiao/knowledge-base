@@ -1,5 +1,15 @@
 import { ChatPromptTemplate } from '@langchain/core/prompts'
 
+const JSON_OUTPUT_RULES = [
+  '输出必须是单个 JSON 对象（json）。不要 markdown 代码围栏，不要解释文字。',
+  '字段名必须与 EXAMPLE 完全一致；禁止仅输出别名（如 safetyClassification 代替 safetyLevel）。',
+].join('\n')
+
+/** LangChain 模板中 `{`/`}` 需双写，避免被当成变量 */
+function exampleJson(value: unknown): string {
+  return JSON.stringify(value).replace(/\{/g, '{{').replace(/\}/g, '}}')
+}
+
 export const conversationSafetyPrompt = ChatPromptTemplate.fromMessages([
   [
     'system',
@@ -11,7 +21,16 @@ export const conversationSafetyPrompt = ChatPromptTemplate.fromMessages([
       '如果不确定，使用 caution + soft_boundary，而不是 safe。',
       '重要：仅根据「本轮用户输入」判断是否有害。若最近对话里助手曾拒绝过有害请求，但本轮用户已回到正常倾诉/闲聊/合法请求，boundaryAction 必须是 continue（或 soft_boundary），禁止因上文惯性继续 refuse/crisis_support。',
       '对自伤危机：boundaryAction 可用 crisis_support 或 soft_boundary；responseGuidance 须要求：拒绝方法、表达关心、引导现实求助，并可提及公开心理援助热线号码。',
-      '输出必须是可被 LangChain 结构化解析的 JSON 对象。',
+      JSON_OUTPUT_RULES,
+      'EXAMPLE JSON OUTPUT:',
+      exampleJson({
+        safetyLevel: 'safe',
+        category: 'normal',
+        boundaryAction: 'continue',
+        reason: '普通倾诉，无安全风险。',
+        responseGuidance: '自然陪伴回复即可。',
+        allowMemoryExtraction: true,
+      }),
     ].join('\n'),
   ],
   [
@@ -44,7 +63,25 @@ export const conversationIntentPrompt = ChatPromptTemplate.fromMessages([
       '优先区分：普通闲聊、情绪陪伴、恋爱暧昧、角色扮演、生活分享、关系建议、记忆更新、偏好设置、对 Agent 的反馈、误会修复。',
       '不要把所有问题都归为关系建议；用户只是想被陪伴、被听见或维持互动时，要识别为陪伴类意图。',
       '当用户表达模糊但情绪明确时，先判断情绪和期待，再决定是否需要追问。',
-      '输出必须是可被 LangChain 结构化解析的 JSON 对象。',
+      JSON_OUTPUT_RULES,
+      'EXAMPLE JSON OUTPUT:',
+      exampleJson({
+        primary: 'emotional_support',
+        secondary: ['casual_chat'],
+        confidence: 0.82,
+        userNeed: 'be_comforted',
+        requestedAgentAction: 'comfort_first',
+        relationshipSignal: 'seeking_closeness',
+        replyExpectation: {
+          depth: 'medium',
+          warmth: 'high',
+          directness: 'gentle',
+          shouldAskQuestion: true,
+        },
+        shouldClarify: false,
+        clarifyingQuestion: null,
+        promptGuidance: '先接住情绪，再轻问一句想继续聊什么。',
+      }),
     ].join('\n'),
   ],
   [
@@ -79,7 +116,20 @@ export const conversationEmotionPrompt = ChatPromptTemplate.fromMessages([
       '必须结合用户输入、最近对话、长期记忆、安全边界结果和意图判断来分析。',
       '不要把轻微抱怨夸大成严重危机；如果安全边界已经提示高风险，要保持谨慎。',
       '重点判断：用户是否需要安慰、是否需要降温、是否需要低压力陪伴、是否需要更具体的建议。',
-      '输出必须是可被 LangChain 结构化解析的 JSON 对象。',
+      JSON_OUTPUT_RULES,
+      'EXAMPLE JSON OUTPUT:',
+      exampleJson({
+        primaryEmotion: 'tired',
+        secondaryEmotions: ['lonely'],
+        intensity: 0.65,
+        valence: 'negative',
+        arousal: 'low',
+        needsComfort: true,
+        needsDeescalation: false,
+        needsClarification: false,
+        emotionalCue: '表达疲惫，想被接住。',
+        replyTone: 'soft',
+      }),
     ].join('\n'),
   ],
   [
@@ -118,7 +168,20 @@ export const conversationRelationshipStagePrompt = ChatPromptTemplate.fromMessag
       '关系阶段不是单纯看用户是否暧昧；也要考虑双方历史是否足够、用户是否信任、是否有冲突、是否存在依赖或边界风险。',
       '如果历史较少，即使用户语气亲密，也不要直接判断为深度亲密；优先给出慢一点、稳一点的推进策略。',
       '如果出现误会、失望、拉黑、冷淡、边界测试或依赖风险，要优先标记 repairing、boundary_sensitive 或 dependency_watch。',
-      '输出必须是可被 LangChain 结构化解析的 JSON 对象。',
+      JSON_OUTPUT_RULES,
+      'EXAMPLE JSON OUTPUT:',
+      exampleJson({
+        stage: 'warming_up',
+        displayName: '熟悉升温',
+        closenessScore: 42,
+        trustLevel: 'medium',
+        stability: 'warming',
+        boundaryMode: 'warm',
+        intimacyPermission: 'medium',
+        pacing: 'hold',
+        riskSignals: ['low_history'],
+        relationshipGuidance: '保持轻松自然，不要突然推进过快。',
+      }),
     ].join('\n'),
   ],
   [
@@ -167,7 +230,17 @@ export const agentMemoryCandidatePrompt = ChatPromptTemplate.fromMessages([
       '如果用户在问「你还记得…/记得吗/记不记得」（回忆探针），必须 shouldExtract=false，不要写入任何候选事实。',
       '如果只是用户当下难过、生气、累，除非它表达了稳定偏好、重要事件或长期边界，否则不要进入长期记忆。',
       'candidateFacts 必须是完整、可独立理解的陈述句事实，禁止写入问句、半截逗号残片、或「你还记得…」类复述。',
-      '输出必须是可被 LangChain 结构化解析的 JSON 对象。',
+      JSON_OUTPUT_RULES,
+      'EXAMPLE JSON OUTPUT:',
+      exampleJson({
+        shouldExtract: false,
+        confidence: 0.9,
+        category: 'small_talk',
+        stability: 'temporary',
+        importance: 0,
+        reason: '普通寒暄，不值得进入长期记忆。',
+        candidateFacts: [],
+      }),
     ].join('\n'),
   ],
   [
@@ -200,10 +273,20 @@ export const agentMemoryExtractionPrompt = ChatPromptTemplate.fromMessages([
       '不要记录临时寒暄、一次性问题、Agent 自己编造的信息、重复的已有记忆、没有把握的推断。',
       '用户在做回忆探针（你还记得…）时必须返回空数组。',
       'content 必须是完整事实句，禁止问句、禁止以「你还记得」开头、禁止无主语的半截残片。',
-      `最多返回 2 条记忆；如果没有值得长期保存的信息，返回空数组。`,
+      '最多返回 2 条记忆；如果没有值得长期保存的信息，返回空数组。',
       'content 使用第一人称或面向用户的简洁中文事实句，不要超过 80 个汉字。',
       'importance 使用 1 到 5，边界、禁忌、长期偏好、重要事件通常更高。',
-      '输出必须是可被 LangChain 结构化解析的 JSON 对象。',
+      JSON_OUTPUT_RULES,
+      'EXAMPLE JSON OUTPUT:',
+      exampleJson({
+        memories: [
+          {
+            type: 'preference',
+            content: '用户更喜欢先被听见感受，再给建议。',
+            importance: 4,
+          },
+        ],
+      }),
     ].join('\n'),
   ],
   [

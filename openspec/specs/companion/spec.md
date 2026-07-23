@@ -2,7 +2,7 @@
 
 ## Purpose（目的）
 
-定义 GoferBot AI 伴侣（Companion）的对话管线系统级规范。覆盖 LangGraph 状态图结构、节点执行顺序、条件路由、LLM 调用约束、安全中断机制、LangChain 适配层（StructuredOutput 降级链 + LlmConfigService 热更新）。
+定义 GoferBot AI 伴侣（Companion）的对话管线系统级规范。覆盖 LangGraph 状态图结构、节点执行顺序、条件路由、LLM 调用约束、安全中断机制、LangChain 适配层（StructuredOutput 启发式方法链 + jsonMode 自管解析 + LlmConfigService 热更新）。
 
 > Companion 与 **Knowledge AI / Chat 知识库问答** 隔离：独立路由、独立 SSE 契约；MUST NOT 调用 Knowledge AI 文档索引/知识检索/知识问答作为伴侣主路径。
 
@@ -135,51 +135,100 @@ AI Companion MUST 保持为独立产品能力：独立路由、独立 API、独�
 - **WHEN** 流在没有安全中断的情况下完成
 - **THEN** 管线服务应验证 7 个关键状态字段（safety、intent、emotion、route、policy、quality、assistantReply），持久化记忆，并保存助手消息
 
-### Requirement: LangChain ChatOpenAI 适配层
+### Requirement: LangChain 适配层
 
-Companion 的 LLM 调用 SHALL 通过 LangChain ChatOpenAI 适配层完成，MUST 使用 StructuredOutputService 提供的三方法降级链确保结构化输出可靠性。
+Companion 的 LLM 调用 SHALL 通过 LangChain ChatOpenAI 适配层完成。结构化节点 MUST 经 `StructuredOutputService` 产出可通过 Zod 校验的对象；generate 路径 MUST 与结构化路径在参数策略上分离（温度、thinking、response_format）。summary 节点 MAY 继续使用纯文本 `invoke`，MUST NOT 被强制套用 json_object。
 
 证据来源：
 - `packages/server/src/modules/companion/langchain/langchain-llm.service.ts`
 - `packages/server/src/modules/companion/langchain/structured-output.service.ts`
-- `packages/server/src/modules/companion/langgraph/nodes/_shared.ts#L26-L49`
+- `packages/server/src/modules/companion/langgraph/nodes/_shared.ts`
 
 #### Scenario: LLM 适配层分工
 
 - **WHEN** 系统需要调用 LLM 时
-- **THEN** Companion 使用 LangChain ChatOpenAI（需要 `withStructuredOutput()`），Chat 使用 LlamaIndex LlamaIndexProvider（仅需 streaming），RAG 使用 LlamaIndex OpenAIEmbedding 适配器（Embedding 生成）
+- **THEN** Companion 使用 LangChain ChatOpenAI；Chat 与 RAG 路径保持既有分工（本 requirement 不扩展 Chat/RAG）
 
-#### Scenario: 统一 LLM 调用入口
+#### Scenario: 统一结构化调用入口
 
 - **WHEN** LangGraph 节点需要调用 LLM 进行结构化输出时
-- **THEN** 节点通过 `SharedNodeFactory.invokeStructured<T>(schema, config, fallback, state, ctx)` 统一调用：buildVariables → prompt.invoke → StructuredOutputService.invokeWithFallback → 成功返回 T，失败返回 fallback 保证管线不中断
+- **THEN** 节点通过 `SharedNodeFactory.invokeStructured<T>(schema, config, fallback, state, ctx)` 统一调用
+- **AND** 成功时返回通过 Zod 校验的 `T`
+- **AND** 结构化调用最终失败时 MUST 返回 **fallback 的独立副本**（不得与模块级 fallback 单例共享可变引用），以保证管线不中断且后续轮次不被污染
 
-### Requirement: StructuredOutput 三方法降级链
+#### Scenario: generate 与 structured 参数分离
 
-系统 SHALL 实现结构化输出的三种方法自动降级，确保不同 LLM API 类型下的兼容性，MUST 在每种方法后执行 Zod 二次校验。
+- **WHEN** 系统创建用于结构化节点的 Chat 模型时
+- **THEN** 配置 MUST 面向确定性 JSON：包括启用 `response_format: { type: 'json_object' }`（或等价）、为该调用设置足以容纳完整 JSON 的 `max_tokens`，以及在供应商支持时关闭 Thinking
+- **AND** generate 节点 MUST NOT 被强制套用 json_object（人设口语生成）
+- **AND** summary 节点 MUST NOT 被强制套用 json_object（会话摘要为纯文本）
+
+### Requirement: StructuredOutput 方法链与 JSON 契约
+
+系统 SHALL 按 **供应商/模型启发式（及可选 env 覆盖）** 选择结构化输出方法链，而非对所有模型固定三方法穷举。对 DeepSeek 类或不兼容 FC/jsonSchema 的模型，结构化主路径 MUST 为 `json_object` / `jsonMode`，且 MUST **自管** raw content 的归一与 Zod 校验（不得仅依赖会在内部吞掉 raw 的解析路径导致无法做别名/清洗）。每种成功路径 MUST 经 Zod 校验。
 
 证据来源：
 - `packages/server/src/modules/companion/langchain/structured-output.service.ts`
+- `packages/server/src/modules/companion/langchain/resolve-structured-methods.ts`
+- `packages/server/src/modules/companion/langchain/structured-json-parse.ts`
 
-#### Scenario: chat_completions API 降级顺序
+#### Scenario: DeepSeek-like 仅 jsonMode
 
-- **WHEN** 使用 OpenAI chat_completions API 时
-- **THEN** 系统按 `functionCalling → jsonSchema → jsonMode` 顺序尝试，每个方法通过 `model.withStructuredOutput(schema, {name, method}).invoke(prompt)` 执行
+- **WHEN** 当前 Companion 模型识别为 DeepSeek-like（如模型名含 deepseek）或 env 指定仅 jsonMode
+- **THEN** 系统 MUST NOT 每轮尝试 `functionCalling` / `jsonSchema`
+- **AND** 系统 MUST 仅使用 `jsonMode`（json_object）作为结构化方法
 
-#### Scenario: responses API 降级顺序
+#### Scenario: 全能力供应商仍可多方法
 
-- **WHEN** 使用 OpenAI responses API 时
-- **THEN** 系统按 `jsonSchema → functionCalling → jsonMode` 顺序尝试
+- **WHEN** 供应商明确支持 json_schema 和/或 function calling 且无 Thinking 冲突时
+- **THEN** 系统 MAY 按启发式或 env 尝试 `jsonSchema` 与/或 `functionCalling`，并在失败后回退到 `jsonMode` 自管解析
+- **AND** 方法顺序 MUST 可被启发式推导或 env 覆盖（`COMPANION_STRUCTURED_METHODS`），不得写死为「所有模型同一顺序」而无判断
 
-#### Scenario: Zod 二次校验
+#### Scenario: jsonMode 自管解析
 
-- **WHEN** 每种方法返回结果后
-- **THEN** 系统 SHALL 通过 `schema.parse(result)` 执行 Zod 二次校验，确保 LLM 输出的类型和结构完全符合预期
+- **WHEN** 使用 json_object / jsonMode 主路径时
+- **THEN** 系统 MUST 取得模型返回的文本 content，并在 Zod 前执行归一：去除常见 markdown fence、提取首个括号平衡的 JSON 对象、应用有限字段别名
+- **AND** MUST NOT 静默接受括号不闭合的半截 JSON 作为成功结果
+- **AND** 系统 MUST 使用 schema 的 parse/safeParse 确保类型与 enum 合法
 
-#### Scenario: 全失败降级
+#### Scenario: Prompt 必须含 json 与 EXAMPLE
 
-- **WHEN** 所有三种方法均失败
-- **THEN** 系统抛 `InternalServerErrorException`；temperature 固定为 0（结构化输出必须是确定性的）
+- **WHEN** 使用 `invokeStructured` 的节点构建 system 或 user prompt 时
+- **THEN** 文本 MUST 包含 `json` 字样（大小写不敏感亦可，但 MUST 明确要求 JSON 输出）
+- **AND** MUST 包含与目标 Zod schema **字段名一致**的 EXAMPLE JSON OUTPUT
+- **AND** MUST 指示模型只输出 JSON 对象
+
+#### Scenario: 全局 repair 预算
+
+- **WHEN** 初次解析或 Zod 校验失败时
+- **THEN** 系统 MAY 使用同一 json_object 约束发起 repair（附带错误摘要与 EXAMPLE）
+- **AND** 每一轮 Companion 管线执行中，所有结构化节点合计 repair LLM 调用 MUST NOT 超过 1 次
+- **AND** 预算耗尽或 repair 仍失败后 MUST 走节点 fallback，MUST NOT 无限重试
+
+#### Scenario: 结构化最终失败不炸穿 HTTP 管线
+
+- **WHEN** StructuredOutputService 对某节点最终失败时
+- **THEN** SharedNodeFactory MUST 捕获失败并采用 fallback 副本继续图执行
+- **AND** 系统 MUST 记录可观测的 fallback 信号（日志至少 warn 级）
+- **AND** MUST NOT 因单节点结构化失败而默认中断整个 Companion HTTP/SSE 请求（安全硬中断语义仍仅由 safety.boundaryAction 决定）
+
+#### Scenario: 已知能力不匹配的日志级别
+
+- **WHEN** 某方法因供应商明确不支持而 400（如 Thinking 不支持 tool_choice、json_schema unavailable）时
+- **THEN** 系统 SHOULD 避免对每次尝试打印 ERROR 级「全链路故障」噪音
+- **AND** 仅在 json_object 主路径与（若有）repair 均失败时 MUST 以 warn/error 明确节点 fallback
+
+#### Scenario: safety 禁止乐观缺省
+
+- **WHEN** safety 节点模型输出缺少 `safetyLevel`、`category`、`boundaryAction` 或 `allowMemoryExtraction` 等关键字段时
+- **THEN** 系统 MUST NOT 用乐观默认值（例如 safe + continue）补全这些字段以伪造成功
+- **AND** 系统 MUST 在 repair 预算允许时尝试 repair，否则走 fallback
+
+#### Scenario: memory_candidate 薄输出可补全
+
+- **WHEN** 模型仅返回 `{ "shouldExtract": false }` 且缺少其余 required 字段时
+- **THEN** 系统 MAY 在 Zod 前用节点级默认值补全
+- **AND** 补全后 MUST 仍通过 schema 校验，或明确走 fallback
 
 ### Requirement: LlmConfigService 配置热更新
 

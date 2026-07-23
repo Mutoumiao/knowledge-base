@@ -55,6 +55,11 @@ export class LlmConfigService implements OnModuleInit {
     }
   }
 
+  /** 当前 Companion 模型 id（未配置时 null）；供 structured 方法链启发式使用 */
+  getModelId(): string | null {
+    return this.baseProvider?.model ?? null
+  }
+
   createLangChainChatModel(
     overrides?: Partial<ConstructorParameters<typeof ChatOpenAI>[0]>,
   ): ChatOpenAI {

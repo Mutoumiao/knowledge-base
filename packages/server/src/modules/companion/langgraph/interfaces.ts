@@ -325,6 +325,11 @@ export interface NodeExecutionContext {
   /** 持久化的多节 defaultPrompt，进入 generate 注入链 */
   companionDefaultPrompt?: string
   signal?: AbortSignal
+  /**
+   * 整轮图共享的 structured repair 预算（D10）。
+   * 由 graph.stream 注入；可变字段 used 跨节点累计。
+   */
+  structuredRepairBudget?: { used: number; budget: number }
 }
 
 export interface CompanionState {

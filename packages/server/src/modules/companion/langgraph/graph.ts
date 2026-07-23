@@ -1,6 +1,10 @@
 import type { RunnableConfig } from '@langchain/core/runnables'
 import { Annotation, END, START, StateGraph } from '@langchain/langgraph'
 import { Injectable, Logger } from '@nestjs/common'
+import {
+  DEFAULT_REPAIR_BUDGET_PER_TURN,
+  type StructuredRepairBudgetState,
+} from '../langchain/structured-repair-budget.js'
 import type { CompanionState, NodeExecutionContext } from './interfaces.js'
 import {
   EmotionNode,
@@ -108,6 +112,11 @@ export class CompanionGraphService {
     initialState: CompanionState,
     ctx: NodeExecutionContext,
   ): AsyncGenerator<{ node: string; patch: Partial<CompanionState> }> {
+    // D10：整轮图执行共享 repair 预算（默认 1 次）；放 configurable 以便各节点共享可变计数
+    const structuredRepairBudget: StructuredRepairBudgetState = {
+      used: 0,
+      budget: DEFAULT_REPAIR_BUDGET_PER_TURN,
+    }
     const rawStream = await this.graph.stream(initialState as never, {
       configurable: {
         companionName: ctx.companionName,
@@ -116,6 +125,7 @@ export class CompanionGraphService {
         companionBoundaries: ctx.companionBoundaries,
         companionGuardrails: ctx.companionGuardrails,
         companionDefaultPrompt: ctx.companionDefaultPrompt,
+        structuredRepairBudget,
       },
       signal: ctx.signal,
       streamMode: 'updates',
@@ -250,6 +260,9 @@ export class CompanionGraphService {
       companionGuardrails: conf.companionGuardrails as string | undefined,
       companionDefaultPrompt: conf.companionDefaultPrompt as string | undefined,
       signal: config?.signal as AbortSignal | undefined,
+      structuredRepairBudget: conf.structuredRepairBudget as
+        | StructuredRepairBudgetState
+        | undefined,
     }
     this.logger.log(`[graph] step=${name}_start`)
     const next = await node.execute(state, ctx)

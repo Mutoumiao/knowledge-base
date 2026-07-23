@@ -18,6 +18,8 @@ export interface StructuredOutputOptions<T> {
   schema: z.ZodSchema<T>
   name: string
   method?: StructuredOutputMethod
+  /** 整轮共享 repair 预算（D10）；不传则不发起 repair */
+  repairBudget?: { used: number; budget: number }
 }
 
 export type PromptInput = string | ChatPromptTemplate | Runnable

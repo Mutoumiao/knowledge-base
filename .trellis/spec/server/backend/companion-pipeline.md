@@ -21,7 +21,7 @@
 
 ## Module Dependencies
 
-- **LangChain 1.x** — ChatOpenAI 适配层，`withStructuredOutput` 提供结构化输出与降级链
+- **LangChain 1.x** — ChatOpenAI 适配层；结构化输出由 `StructuredOutputService` 按模型启发式选择方法链（DeepSeek-like 默认仅 `jsonMode` / `json_object` 自管解析 + 全局 repair≤1）。权威契约见 [openspec/specs/companion/spec.md](../../../../openspec/specs/companion/spec.md)（StructuredOutput 方法链与 JSON 契约）；勿再假设固定 FC→jsonSchema→jsonMode 三方法穷举
 - **LangGraph** — StateGraph 状态机，`streamMode: 'updates'` 产出逐节点状态补丁
 - **Zod** — 结构化输出 Schema 校验
 - **@goferbot/data** — CompanionState Schema 与共享类型

@@ -1,0 +1,18 @@
+# 完成日志
+
+格式：`[状态] 轨道 issue-id 摘要 — 关键变更点（测试数），[issue链接]`
+
+---
+
+## [2026-07-23]
+
+### companion / server
+
+- [closed] companion-structured-json-output — DeepSeek-like 结构化输出改 `json_object`（jsonMode）主路径，跳过必失败的 FC/jsonSchema；本地自管 parse（fence / 括号平衡 / 有限别名 / D11 缺省 / Zod）；整轮 repair 预算 ≤1；6 个 structured prompt 补 EXAMPLE JSON；fallback `structuredClone`；thinking 关闭仅在参数被拒时重试；`finish_reason=length` 记 truncated 可 repair。主 spec 已 sync。单测约 34 项。OpenSpec: `openspec/changes/companion-structured-json-output/`；完成/审查说明见 `docs/report/companion-structured-json-output-*.md`（本地 gitignore，不入库）。
+
+### docs / trellis
+
+- [docs] Trellis companion-pipeline HOW：结构化输出改为引用 OpenSpec 方法链契约，废弃「固定三方法穷举」表述
+- [docs] 恢复根目录 CHANGELOG.md 条目（本条）
+
+---

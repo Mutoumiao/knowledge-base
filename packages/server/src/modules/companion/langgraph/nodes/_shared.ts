@@ -9,6 +9,17 @@ import type { CompanionState, MemoryCandidate, NodeExecutionContext } from '../i
 const MEMORY_SIGNAL_REGEX =
   /记住|下一次|以后|下次|别再|不要再|我喜欢|我不喜欢|我讨厌|我的习惯|我的边界|我的偏好|我希望你|我以后/i
 
+/** 独立副本，避免节点就地改写污染模块级 fallback 单例（含嵌套对象/数组） */
+function cloneFallbackValue<T>(fallback: T): T {
+  if (fallback == null || typeof fallback !== 'object') return fallback
+  try {
+    return structuredClone(fallback)
+  } catch {
+    // 含不可克隆值时退回一层浅拷贝
+    return { ...(fallback as object) } as T
+  }
+}
+
 /** 寒暄/确认短句 */
 const SMALL_TALK_ONLY_REGEX =
   /^(嗯|哦|噢|好|好的+|哈哈+|谢谢|谢啦|收到|了解|行|ok|OK|早安|晚安|再见)[。.!！~～\s]*$/i
@@ -57,20 +68,22 @@ export class SharedNodeFactory {
     const promptValue = await config.prompt.invoke(variables)
     const promptText = typeof promptValue === 'string' ? promptValue : JSON.stringify(promptValue)
 
+    const started = Date.now()
     try {
-      const result = (await this.structuredOutputService.invokeWithFallback(
-        { schema, name: config.name } as never,
+      // 成功/repair 日志由 StructuredOutputService 统一打（含 method/stage），此处避免双写
+      return (await this.structuredOutputService.invokeWithFallback(
+        {
+          schema,
+          name: config.name,
+          repairBudget: ctx.structuredRepairBudget,
+        } as never,
         promptText,
         ctx.signal,
       )) as T
-      this.logger.log(`[${config.name}] stage=success`)
-      return result
     } catch (_err) {
-      this.logger.warn(`[${config.name}] stage=fallback`)
-      // 浅拷贝：调用方可能就地改写 result，禁止污染模块级 fallback 单例
-      return (
-        fallback && typeof fallback === 'object' ? { ...(fallback as object) } : fallback
-      ) as T
+      this.logger.warn(`[${config.name}] stage=fallback ms=${Date.now() - started}`)
+      // 深拷贝：禁止污染模块级 fallback 单例（含 replyExpectation / secondary 等嵌套字段）
+      return cloneFallbackValue(fallback)
     }
   }
 
