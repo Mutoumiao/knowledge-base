@@ -5,6 +5,8 @@
 > 来源：`companion-structured-json-output` D12 预发（2026-07-23，deepseek-v4-flash + L1 全量）。  
 > Change 已归档：`openspec/changes/archive/2026-07-23-companion-structured-json-output/`。  
 > 证据：`docs/report/companion-structured-json-output-preflight-result-2026-07-23.md`。  
+> **整产品结论报告（Complete vs Optimize + 建议 change 切分）：**  
+> `docs/report/companion-product-gap-and-optimize-2026-07-23.md`（立项 OpenSpec 时优先引用）。  
 > **不**阻塞结构化 jsonMode 发版；与 D12 门禁解耦。
 
 ### 优先（影响路由 / 用户体感）
