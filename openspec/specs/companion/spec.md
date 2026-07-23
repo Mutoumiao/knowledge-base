@@ -36,16 +36,26 @@ AI Companion MUST 保持为独立产品能力：独立路由、独立 API、独�
 
 ### Requirement: Conditional Branching
 
-系统应在 StateGraph 管线中支持条件分支；Safety 硬中断与 Memory 跳过保持；Quality 结果 MUST 采用观测型语义，不得因 quality fail 丢弃主回复或跳过 summary/memory。
+系统应在 StateGraph 管线中支持条件分支；**有害内容的默认产品路径为 soft 边界并继续 generate**，Memory 跳过保持；Quality 结果 MUST 采用观测型语义，不得因 quality fail 丢弃主回复或跳过 summary/memory。
 
 证据来源：
 - `packages/server/src/modules/companion/langgraph/graph.ts`
-- 行为权威：ai-partner-agent inbox QualityGuard（评测后仍保存助手消息）
+- `packages/server/src/modules/companion/langgraph/nodes/safety-node.ts`
+- 产品决策：L1 D6 + Grill §11（人设拒绝有正文，非空泡硬中断）
 
-#### Scenario: Safety block termination
+#### Scenario: Safety soft boundary continues pipeline
 
-- **WHEN** safety 节点输出的 `boundaryAction` 等于 `'refuse'` 或 `'crisis_support'`
-- **THEN** 图应立即终止（END），返回包含 `safetyReason` 的安全中断响应，且 MUST NOT 持久化正常情感向助手回复
+- **WHEN** safety 节点判定用户本轮请求属于须拒绝的有害意图（含自伤方法探询、违法协助、网暴/伤害方法等），无论 LLM 原始 `boundaryAction` 为 `refuse`、`crisis_support` 或 `soft_boundary`
+- **THEN** 系统 MUST 使下游可继续管线（推荐出口归一 `boundaryAction = soft_boundary`）
+- **AND** 图 MUST 继续执行 intent→…→generate→quality 等后续节点，MUST NOT 仅因该判定而 `END` 且无助手正文
+- **AND** 系统 MUST 通过 generate（或等价约束生成）产出 **非空** 人设拒绝正文，且 MUST NOT 展开有害方法或步骤
+- **AND** 默认实现 MUST 删除 `refuse`/`crisis_support` → 空 `END` 产品分支
+
+#### Scenario: Safety does not default to empty hard stop
+
+- **WHEN** 用户发送上述有害请求
+- **THEN** 系统 MUST NOT 以「无助手消息 + 仅 SSE error」作为默认产品完成态
+- **AND** 系统 MUST 允许用户在拒绝后以正常话题继续同一会话（CONT）
 
 #### Scenario: Quality check failure is observational
 
@@ -53,7 +63,6 @@ AI Companion MUST 保持为独立产品能力：独立路由、独立 API、独�
 - **THEN** 系统 MUST 仍保留 `assistantReply` 供下发与落库（经软修复后的文本若存在则用修复版）
 - **AND** 系统 MUST 将 quality 结果纳入消息 metadata
 - **AND** 系统 MUST NOT 仅因 quality fail 而跳过 summary 与 memory_candidate/memory_extraction 路径
-- **AND** safety `refuse` / `crisis_support` 仍为硬中断（与 quality 观测语义独立）
 
 #### Scenario: Quality 规则软修复（G-QL-01）
 
@@ -118,22 +127,30 @@ AI Companion MUST 保持为独立产品能力：独立路由、独立 API、独�
 
 ### Requirement: Safety Interrupt in Pipeline Service
 
-外部管线编排器应监控 LangGraph 流，并在安全边界被触发时中止执行。
+外部管线编排器应监控 LangGraph 流；**有害拒绝的默认产品路径 MUST NOT 再以 pipeline `safetyBlocked` 硬中断结束**。编排器 MUST 支持将完整 soft 边界轮次执行至 generate 完成并交付非空助手正文。
 
 证据来源：
-- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts#L84-L108`
+- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts`
+- `packages/server/src/modules/companion/companion-chat-stream.service.ts`
 
-#### Scenario: Safety-driven stream termination
+#### Scenario: Soft refuse is normal completion path
 
-- **WHEN** 管线服务在流式状态补丁中检测到 `boundaryAction === 'refuse'` 或 `'crisis_support'`
-- **THEN** 它应跳出流循环，产生 `{ patch, safetyBlocked: true, safetyReason }`，且不持久化助手消息
-- **AND** 系统 MUST 尝试写入侧信道观测事件（`type=safety_hard_stop`），供 Admin 聚合硬中断率
-- **AND** 观测写入失败 MUST NOT 阻断向客户端返回安全错误事件
+- **WHEN** safety 将本轮归一为 soft 边界拒绝语义并继续图执行
+- **THEN** 管线服务 MUST NOT 设置 `safetyBlocked: true` 并提前 break
+- **AND** 流式层 MUST 下发非空助手正文（token/done 或等价成功收尾）并 **持久化助手消息**
+- **AND** MUST NOT 以 `ERR_SAFETY_BLOCKED` 作为该路径的主完成信号
+- **AND** MUST NOT 在已交付非空正文后以 `ERR_SAFETY_BLOCKED` 覆盖成功态
+
+#### Scenario: Boundary turn completion persists assistant
+
+- **WHEN** 流在 soft 边界下完成且 `assistantReply` 非空
+- **THEN** 管线服务应验证关键状态字段（含 `assistantReply`），保存助手消息
+- **AND** 边界轮 SHOULD 禁止将有害实施类内容抽取为长期记忆偏好（`allowMemoryExtraction` 宜为 false）
 
 #### Scenario: Normal completion
 
-- **WHEN** 流在没有安全中断的情况下完成
-- **THEN** 管线服务应验证 7 个关键状态字段（safety、intent、emotion、route、policy、quality、assistantReply），持久化记忆，并保存助手消息
+- **WHEN** 流在 soft 边界或普通闲聊下完成
+- **THEN** 管线服务应验证 7 个关键状态字段（safety、intent、emotion、route、policy、quality、assistantReply），按既有规则持久化记忆，并保存助手消息
 
 ### Requirement: LangChain 适配层
 
@@ -651,21 +668,27 @@ Companion 对话 SHALL 以流式方式呈现助手回复；**服务端**保持 C
 
 ### Requirement: 安全硬中断侧信道观测（设计 A 保持）
 
-当 `boundaryAction` 为 `refuse` 或 `crisis_support` 导致安全硬中断时，系统 MUST 保持既有产品行为：MUST NOT 仅为观测而向会话写入助手消息气泡。系统 MUST 通过侧信道表 `companion_obs_events`（模型 `CompanionObsEvent`）写入硬中断事件，供 Admin 聚合硬中断率。
+系统 MUST 区分 **产品软拒绝**（有正文成功轮）与 **真正硬中断**。软拒绝轮 MUST 向会话写入助手消息气泡；MUST NOT 将软拒绝计入「无气泡硬中断」口径。若仍存在非产品默认的真正硬中断，仍可通过侧信道表 `companion_obs_events` 写入，供 Admin 聚合。
 
-#### Scenario: 硬中断不污染会话历史
+#### Scenario: 软拒绝写入会话历史
 
-- **WHEN** 安全节点判定 refuse 或 crisis_support
-- **THEN** 系统 MUST NOT 将硬中断伪造成功的助手聊天气泡写入会话历史（与设计 A 一致）
-- **AND** 系统 MUST 尝试写入侧信道观测事件（`type=safety_hard_stop`、`boundaryAction`、时间戳及 companion/conversation/user 关联 id）
-- **AND** 观测写入失败 MUST NOT 阻断向客户端返回安全错误事件
+- **WHEN** 本轮为有害内容的产品软拒绝且 generate 产出非空正文
+- **THEN** 系统 MUST 将助手消息写入会话历史
+- **AND** MUST NOT 将该轮伪造成「无气泡 + 仅 error」的成功替代
+- **AND** 系统 SHOULD 记录可区分观测（metadata 边界标记或日志），MUST NOT 用 `type=safety_hard_stop` 冒充硬中断
 
 #### Scenario: 硬中断率聚合口径
 
 - **WHEN** Admin 请求 safety 硬中断率且事件存储已就绪
-- **THEN** 率 MUST 定义为：时间窗内硬中断事件数 / 时间窗内 Companion **用户消息**数
+- **THEN** 率 MUST 定义为：时间窗内 **`safety_hard_stop` 硬中断事件**数 / 时间窗内 Companion **用户消息**数
+- **AND** 软拒绝轮 MUST NOT 计入硬中断事件分子
 - **AND** 用户消息分母为 0 时 KPI status MUST 为 `insufficient_samples`
 - **AND** 事件存储查询失败时 Hub KPI MUST 为 `pending_instrumentation`，MUST NOT 从助手 metadata 臆造硬中断率
+
+#### Scenario: 观测写入失败不阻断对话
+
+- **WHEN** 软拒绝相关观测写入失败
+- **THEN** 观测失败 MUST NOT 阻断向客户端交付已生成的助手正文
 
 ### Requirement: 负反馈率分母固定
 
@@ -902,18 +925,29 @@ Web Companion 列表 MUST 提供「官方推荐」与「我的伴侣」双 Tab�
 
 ### Requirement: 流式完成不得静默空回复
 
-Companion 成功结束一轮对话时，用户 MUST 能获得非空助手正文，或明确的失败/安全中断信号。系统 MUST NOT 在非 safety 硬中断场景下以「无正文且无 error」作为完成态。
+Companion 成功结束一轮对话时，用户 MUST 能获得非空助手正文，或明确的失败信号。系统 MUST NOT 以「无正文且无 error」作为完成态。**有害拒绝的默认产品路径属于成功轮**，MUST 有非空正文。
 
 证据来源：
 - `packages/server/src/modules/companion/companion-chat-stream.service.ts`
-- L1 轨迹 `companion-l1-20260722-225221`（WAN-AFFECT / ZHI-MEM-R aborted 空文）
 
 #### Scenario: 生成结果为空
 
-- **WHEN** 管线结束时 `assistantReply` 与可用 partial 皆为空（或仅空白），且本轮 **不是** safety `refuse` / `crisis_support` 硬中断
+- **WHEN** 管线结束时 `assistantReply` 与可用 partial 皆为空（或仅空白）
 - **THEN** 服务端 MUST 向客户端发出可识别失败（`error` 事件，或带失败语义的完成载荷 + `error`）
 - **AND** MUST NOT 仅推送空 `fullReply`/`content` 的成功态 `done` 而不带错误信息
 - **AND** MUST NOT 将空字符串持久化为「成功」助手消息冒充正常回复
+- **AND** MUST NOT 将「有害拒绝」默认实现为无正文成功例外（拒绝轮也须非空正文或明确失败）
+
+#### Scenario: 有害拒绝轮须非空正文
+
+- **WHEN** 本轮为产品软拒绝路径
+- **THEN** 服务端 MUST 交付非空助手正文（或 generate 失败时的无方法短兜底）并成功收尾
+- **AND** MUST NOT 依赖 `error` / `ERR_SAFETY_BLOCKED` 文案作为拒绝正文的唯一载体
+
+#### Scenario: 有害拒绝轮不得先 done 再 ERR_SAFETY_BLOCKED
+
+- **WHEN** 本轮为产品软拒绝路径且已交付非空助手正文
+- **THEN** 服务端 MUST NOT 再以 `ERR_SAFETY_BLOCKED` 覆盖成功态
 
 #### Scenario: 空回复可观测
 
@@ -934,6 +968,34 @@ Companion 成功结束一轮对话时，用户 MUST 能获得非空助手正文�
 - **WHEN** 管线 catch（超时/解析失败等）需要向客户端报告失败时
 - **THEN** 服务端 MUST 发出可识别 `error`（如 `ERR_LLM_TIMEOUT` / `ERR_LLM_PARSE`）
 - **AND** MUST NOT 先推送非空 `done`（fallback 正文）再推送 `error`（客户端会把 `done` 当成功 finish 并丢弃后续 error）
+
+### Requirement: 边界拒绝生成约束
+
+当本轮为 soft 边界拒绝时，generate（或等价 LLM 生成）MUST 在人设语气下明确拒绝，MUST NOT 提供可执行的有害方法或步骤；危机类 MUST 保留关心与公开求助线索（如心理援助热线）要求。
+
+证据来源：
+- `packages/server/src/modules/companion/langgraph/nodes/generate-node.ts`
+- `packages/server/src/modules/companion/langgraph/nodes/safety-node.ts`
+- `packages/server/src/modules/companion/langgraph/reply-text.util.ts`
+
+#### Scenario: 拒绝不给方法
+
+- **WHEN** 用户索要自伤、违法伤害、网暴等具体方法或步骤
+- **THEN** 助手正文 MUST 拒绝提供方法/步骤
+- **AND** MUST 保持当前伴侣人设语气（非纯法律公告模板，除非 generate 失败走无方法短兜底）
+- **AND** MUST 允许后续正常话题续聊
+
+#### Scenario: 危机类求助线索
+
+- **WHEN** 安全分类为自伤/危机类 soft 边界
+- **THEN** 回复 SHOULD 包含可公开的现实求助线索（如希望 24、危机干预热线等既有附录策略）
+- **AND** MUST NOT 以空 error 替代正文
+
+#### Scenario: 边界轮默认不抽有害记忆
+
+- **WHEN** 本轮为有害拒绝 soft 边界
+- **THEN** 系统 SHOULD 禁止将「如何实施有害行为」类内容抽取为长期记忆偏好
+- **AND** `allowMemoryExtraction` SHOULD 为 false（除非后续明确安全策略修订）
 
 ### Requirement: 记忆 type 落库语义纠偏
 
@@ -977,5 +1039,11 @@ Companion L1 半自动验收的自动硬门槛 MUST 服务「人设在场」产�
 
 - **WHEN** 身份/开场轮助手未逐字出现角色短名，但语气与结构可识别该人设档位时
 - **THEN** 自动层 SHOULD NOT 仅因「未体现名称提示」而硬 FAIL
+
+#### Scenario: 记忆关键词不得单独否决签字
+
+- **WHEN** 自动验收脚本评估同会话/跨会话记忆检查轮的关键词命中率
+- **THEN** 脚本 MUST NOT 仅因关键词命中数不足而将 `autoLayerPass` 置失败或以 exit 1 否决人工签字前提
+- **AND** 报告 MUST 将关键词结果标为辅助；L1 过线以官方四角色人工七维 + 盲测为准
 - **AND** 系统 MAY 以「名称出现 **或** 人设锚点词命中」作为自动辅助条件
 - **AND** 最终 D1 仍以多裁判/人工为准

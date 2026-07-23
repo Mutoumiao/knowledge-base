@@ -12,6 +12,21 @@ export class MemoryCandidateNode {
     state: CompanionState,
     ctx: NodeExecutionContext,
   ): Promise<Partial<CompanionState>> {
+    // soft 边界拒绝轮：禁止把「教我网暴/违法」等抽成长期记忆（safety 出口会设 false）
+    if (state.safety?.allowMemoryExtraction === false) {
+      return {
+        memoryCandidate: {
+          shouldExtract: false,
+          confidence: 1,
+          category: 'unsafe',
+          stability: 'stable',
+          importance: 0,
+          reason: 'safety.allowMemoryExtraction=false',
+          candidateFacts: [],
+        },
+      }
+    }
+
     // 规则快速跳过（空/短/寒暄/重复/敏感/回忆探针）
     const fastSkip = this.shared.shouldSkipMemoryCandidateFast({
       userText: state.userMessage,

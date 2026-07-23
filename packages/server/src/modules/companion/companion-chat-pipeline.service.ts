@@ -144,8 +144,6 @@ export class CompanionChatPipelineService {
     ctx: NodeExecutionContext,
   ): AsyncGenerator<{
     patch: Partial<CompanionState>
-    safetyBlocked: boolean
-    safetyReason: string
     node?: string
     nodeMs?: number
   }> {
@@ -153,21 +151,7 @@ export class CompanionChatPipelineService {
     for await (const { node, patch } of this.graphService.stream(initialState, ctx)) {
       const nodeMs = Date.now() - stepStarted
       stepStarted = Date.now()
-      if (
-        patch.safety?.boundaryAction === 'refuse' ||
-        patch.safety?.boundaryAction === 'crisis_support'
-      ) {
-        yield {
-          patch,
-          safetyBlocked: true,
-          safetyReason: patch.safety.reason,
-          node,
-          nodeMs,
-        }
-        break
-      }
-
-      yield { patch, safetyBlocked: false, safetyReason: '', node, nodeMs }
+      yield { patch, node, nodeMs }
     }
   }
 

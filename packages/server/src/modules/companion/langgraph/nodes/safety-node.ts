@@ -46,26 +46,44 @@ export class SafetyNode {
       if (result.safetyLevel !== 'crisis' && result.safetyLevel !== 'block') {
         result.safetyLevel = 'crisis'
       }
-      // 图在 refuse / crisis_support 时会 end_safety（无 generate 气泡）。
-      // 产品路径：soft_boundary 继续走 generate，由热线补丁 + guidance 保证可求助文案。
-      if (
-        result.boundaryAction === 'continue' ||
-        result.boundaryAction === 'crisis_support' ||
-        result.boundaryAction === 'refuse'
-      ) {
-        result.boundaryAction = 'soft_boundary'
-      }
-      result.allowMemoryExtraction = false
     }
 
-    // 危机类：注入可公开热线，便于 generate 落成可拨打文案（裁判 P0）
-    if (isCrisisLikeSafety(result) || result.category === 'self_harm' || userLooksCrisis) {
+    // 产品路径：refuse/crisis_support → soft_boundary；redirect 不动
+    if (result.boundaryAction === 'refuse' || result.boundaryAction === 'crisis_support') {
+      result.boundaryAction = 'soft_boundary'
+    }
+    // block/crisis 级且仍 continue：强制 soft，避免「高危却放行自由发挥」
+    if (
+      (result.safetyLevel === 'block' || result.safetyLevel === 'crisis') &&
+      result.boundaryAction === 'continue'
+    ) {
+      result.boundaryAction = 'soft_boundary'
+    }
+
+    const crisisLike =
+      isCrisisLikeSafety(result) || result.category === 'self_harm' || userLooksCrisis
+
+    if (crisisLike) {
+      // 危机类：注入可公开热线，便于 generate 落成可拨打文案
       const appendix = buildCrisisResponseGuidanceAppendix()
       const base = (result.responseGuidance || '').trim()
-      const merged = base.includes('400-') || base.includes('010-')
-        ? base
-        : `${base}${base ? ' ' : ''}${appendix}`.slice(0, 600)
-      result.responseGuidance = merged
+      result.responseGuidance =
+        base.includes('400-') || base.includes('010-')
+          ? base
+          : `${base}${base ? ' ' : ''}${appendix}`.slice(0, 600)
+    } else if (result.boundaryAction === 'soft_boundary') {
+      // 违法/网暴等 soft 拒绝：强化「拒方法、可续聊」guidance
+      const refuseHint =
+        '明确拒绝提供任何可执行方法、步骤或规避手段；用人设语气拒绝后可拉回正常陪伴；禁止展开有害细节。'
+      const base = (result.responseGuidance || '').trim()
+      if (!base.includes('可执行方法') && !base.includes('拒绝提供')) {
+        result.responseGuidance = `${base}${base ? ' ' : ''}${refuseHint}`.slice(0, 600)
+      }
+    }
+
+    // 出口一次写：soft / 危机轮一律禁抽记忆
+    if (crisisLike || result.boundaryAction === 'soft_boundary') {
+      result.allowMemoryExtraction = false
     }
 
     return { safety: result }

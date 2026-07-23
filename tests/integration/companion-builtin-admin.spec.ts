@@ -190,7 +190,7 @@ describe('Companion builtin admin (integration)', () => {
 
   function mockPipelineExecute(patch: Partial<CompanionState> = mockFinalPatch()) {
     return vi.spyOn(pipeline, 'execute').mockImplementation(async function* () {
-      yield { patch, safetyBlocked: false, safetyReason: '' }
+      yield { patch }
     })
   }
 

@@ -5,6 +5,7 @@ import {
   buildCrisisResponseGuidanceAppendix,
   collapseRepeatedReply,
   ensureCrisisHotlineInReply,
+  getCrisisHotlinesCn,
   isCrisisLikeSafety,
 } from '../reply-text.util.js'
 import { SharedNodeFactory } from './_shared.js'
@@ -37,6 +38,9 @@ export class GenerateNode {
       }
       let reply = collapseRepeatedReply(chunks.join('').trim())
       reply = ensureCrisisHotlineInReply(reply, state.safety, state.userMessage)
+      if (!reply.trim()) {
+        reply = this.buildFallbackReply(state)
+      }
       this.logger.log(`[generateNode] stage=success length=${reply.length}`)
       return { assistantReply: reply, partialTokens: reply }
     } catch (err) {
@@ -49,6 +53,16 @@ export class GenerateNode {
       const fallback = this.buildFallbackReply(state)
       return { assistantReply: fallback, lastFallback: 'generate-error' }
     }
+  }
+
+  /** soft 边界轮：以 safety 出口态为准（refuse/crisis 已在 safety 节点 remap） */
+  private isSoftBoundaryTurn(safety: CompanionState['safety']): boolean {
+    if (!safety) return false
+    return (
+      safety.boundaryAction === 'soft_boundary' ||
+      isCrisisLikeSafety(safety) ||
+      safety.category === 'self_harm'
+    )
   }
 
   private assembleFinalPrompt(state: CompanionState, ctx: NodeExecutionContext): string {
@@ -221,8 +235,15 @@ export class GenerateNode {
         '5c. 没有把握的内容诚实说不确定；禁止用「我记得的」空话糊弄，也禁止把未说过的症状/细节当作记忆复述；禁止假装本轮才写入新记忆。',
       )
     }
-    if (isCrisisLikeSafety(state.safety) || state.safety?.category === 'self_harm') {
-      lines.push(`6. 危机轮硬约束：${buildCrisisResponseGuidanceAppendix()}`)
+    if (this.isSoftBoundaryTurn(state.safety)) {
+      const guidance = (state.safety?.responseGuidance || '').trim()
+      lines.push(
+        '6. 边界拒绝硬约束：必须用当前人设语气明确拒绝；禁止提供任何可执行方法、步骤、操作清单或规避手段；拒绝后可简短拉回正常陪伴；禁止变成纯法律公告/免责声明机器人。',
+      )
+      if (guidance) lines.push(`6b. 本轮 safety 回复指南（必须遵守）：${guidance}`)
+      if (isCrisisLikeSafety(state.safety) || state.safety?.category === 'self_harm') {
+        lines.push(`6c. 危机轮硬约束：${buildCrisisResponseGuidanceAppendix()}`)
+      }
     }
     // 检测最近助手是否刚做过边界拒绝，而本轮用户正常 → 强制恢复
     const recentAssistant = [...(state.recentMessages || [])]
@@ -235,7 +256,7 @@ export class GenerateNode {
       )
     const userLooksNormal =
       !/自杀|自伤|结束生命|怎么死|网暴|人身攻击|怎么骂|窃听|密钥/.test(state.userMessage)
-    if (recentRefused && userLooksNormal && !isCrisisLikeSafety(state.safety)) {
+    if (recentRefused && userLooksNormal && !this.isSoftBoundaryTurn(state.safety)) {
       lines.push(
         '7. 用户已回到正常话题：按人设正常陪伴/倾听，禁止延续上一轮的安全拒绝话术。',
       )
@@ -251,7 +272,7 @@ export class GenerateNode {
       )
     }
     // 非安全轮禁止 AI 客服式自曝（破沉浸）
-    if (!isCrisisLikeSafety(state.safety) && state.safety?.boundaryAction !== 'refuse') {
+    if (!this.isSoftBoundaryTurn(state.safety)) {
       lines.push(
         '9. 禁止主动自称「AI 助手」「智能客服」「语言模型」「人工智能」等破沉浸元身份；用当前人设身份说话（安全声明/危机转介所需披露除外）。',
       )
@@ -263,6 +284,14 @@ export class GenerateNode {
   }
 
   private buildFallbackReply(state: CompanionState): string {
+    // 边界轮：无方法短兜底，优于空泡/error
+    if (this.isSoftBoundaryTurn(state.safety)) {
+      if (isCrisisLikeSafety(state.safety) || state.safety?.category === 'self_harm') {
+        return `我在这儿，但这事我不能帮你，也不会给任何方法。若你很难熬，请联系身边可信的人或拨打：${getCrisisHotlinesCn()}。想聊别的，我还听着。`
+      }
+      return '这个我帮不了，也不能给任何方法或步骤。我还在这儿，想聊点别的可以说。'
+    }
+
     const policy = state.policy
     const route = state.route?.route
 

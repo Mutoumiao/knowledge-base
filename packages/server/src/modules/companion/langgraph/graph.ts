@@ -50,7 +50,7 @@ const CompanionGraphState = Annotation.Root({
   lastFallback: Annotation<string | undefined>(),
 })
 
-type Branch = 'continue' | 'end_safety' | 'skip_memory'
+type Branch = 'continue' | 'skip_memory'
 
 /** 对外/观测使用的逻辑节点名 → 图内实际 node id */
 export const GRAPH_STEP_TO_NODE = {
@@ -192,22 +192,8 @@ export class CompanionGraphService {
     )
 
     builder.addEdge(START as never, N.safety as never)
-
-    builder.addConditionalEdges(
-      N.safety as never,
-      (state: CompanionState): Branch => {
-        const action = state.safety?.boundaryAction
-        if (action === 'refuse' || action === 'crisis_support') {
-          this.logger.log('[graph] step=safety_blocked')
-          return 'end_safety'
-        }
-        return 'continue'
-      },
-      {
-        continue: N.intent as never,
-        end_safety: END as never,
-      },
-    )
+    // 产品路径：有害拒绝走 soft 边界 + generate 有正文；不再 end_safety 空 END
+    builder.addEdge(N.safety as never, N.intent as never)
 
     builder.addEdge(N.intent as never, N.emotion as never)
     builder.addEdge(N.emotion as never, N.relationship as never)

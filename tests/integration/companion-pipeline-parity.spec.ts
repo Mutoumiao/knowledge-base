@@ -194,7 +194,7 @@ describe('Companion pipeline parity (integration)', () => {
 
   function mockPipelineExecute(patch: Partial<CompanionState>) {
     return vi.spyOn(pipeline, 'execute').mockImplementation(async function* () {
-      yield { patch, safetyBlocked: false, safetyReason: '' }
+      yield { patch }
     })
   }
 

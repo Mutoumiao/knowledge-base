@@ -17,10 +17,7 @@ import {
   absoluteSnapshotToDelta,
   collapseRepeatedReply,
   ensureCrisisHotlineInReply,
-  getCrisisHotlinesCn,
-  isCrisisLikeSafety,
 } from './langgraph/reply-text.util.js'
-import { CompanionObsEventRepository } from './repositories/companion-obs-event.repository.js'
 
 /** 有实现的节点才允许记 span；禁止空壳子 span */
 const REAL_GRAPH_NODES = new Set([
@@ -43,7 +40,6 @@ export class CompanionChatStreamService {
 
   constructor(
     private readonly pipeline: CompanionChatPipelineService,
-    private readonly obsEvents: CompanionObsEventRepository,
     @Optional() private readonly obsTurn?: ObservabilityTurnService,
   ) {}
 
@@ -69,28 +65,17 @@ export class CompanionChatStreamService {
       const executionCtx = { ...ctx, signal }
 
       let fullState: Partial<CompanionState> = { ...initialState }
-      let safetyBlocked = false
-      let safetyReason = ''
       /** 已向客户端累计发出的正文（partialTokens 按「绝对快照」解释，防 quality 二次全文拼接） */
       let emittedAbsolute = ''
 
-      for await (const {
-        patch,
-        safetyBlocked: blocked,
-        safetyReason: reason,
-        node,
-        nodeMs,
-      } of this.pipeline.execute(initialState as CompanionState, executionCtx)) {
+      for await (const { patch, node, nodeMs } of this.pipeline.execute(
+        initialState as CompanionState,
+        executionCtx,
+      )) {
         fullState = { ...fullState, ...patch }
 
         if (node && typeof nodeMs === 'number' && REAL_GRAPH_NODES.has(node)) {
           spanMs[node] = (spanMs[node] ?? 0) + nodeMs
-        }
-
-        if (blocked) {
-          safetyBlocked = true
-          safetyReason = reason
-          break
         }
 
         if (patch.partialTokens) {
@@ -107,35 +92,6 @@ export class CompanionChatStreamService {
           }
           // soft-repair 全文改写：delta=null，不追加第二份；done 以 assistantReply 为准
         }
-      }
-
-      if (safetyBlocked) {
-        // 设计 A：不落助手消息；A1+ 侧信道写 obs_event 供看板聚合
-        await this.obsEvents.recordSafetyHardStop({
-          companionId: params.companionId,
-          conversationId,
-          userId: params.userId,
-          boundaryAction: fullState.safety?.boundaryAction,
-          reason: safetyReason,
-        })
-        const latencyMs = Date.now() - startedAt
-        this.writeCompanionObs({
-          traceId,
-          userId: params.userId,
-          conversationId,
-          status: 'ok',
-          latencyMs,
-          spanMs,
-          fullState,
-          safetyHardStop: true,
-        })
-        // 硬中断无气泡时，错误文案仍应带可求助线索（危机类）
-        let blockMsg = safetyReason || '该请求无法继续'
-        if (isCrisisLikeSafety(fullState.safety) || fullState.safety?.category === 'self_harm') {
-          blockMsg = `${blockMsg}。若你此刻很难熬，请立刻联系身边可信的人或拨打：${getCrisisHotlinesCn()}。`
-        }
-        yield this.errorEvent('ERR_SAFETY_BLOCKED', blockMsg)
-        return
       }
 
       // 图可能因 LLM 配置缺失未跑完节点；完整性失败时仍返回可用文案
@@ -275,7 +231,6 @@ export class CompanionChatStreamService {
     postProcessMs?: number
     spanMs: Record<string, number>
     fullState: Partial<CompanionState>
-    safetyHardStop?: boolean
     emptyReply?: boolean
     timeout?: boolean
   }): void {
@@ -290,7 +245,6 @@ export class CompanionChatStreamService {
       emotion: input.fullState.emotion?.primaryEmotion,
       route: input.fullState.route?.route,
       quality: quality?.status,
-      safetyHardStop: input.safetyHardStop || undefined,
       emptyReply: input.emptyReply || undefined,
       timeout: input.timeout || undefined,
       ...(tokens.inputTokens > 0 || tokens.outputTokens > 0
@@ -309,7 +263,6 @@ export class CompanionChatStreamService {
         postProcessMs: input.postProcessMs,
         flags: {
           qualityFail: quality?.status === 'fail' || undefined,
-          safetyHardStop: input.safetyHardStop || undefined,
           empty_reply: input.emptyReply || undefined,
           timeout: input.timeout || undefined,
         },
