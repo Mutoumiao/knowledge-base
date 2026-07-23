@@ -197,10 +197,10 @@ export class CompanionChatPipelineService {
     items: Array<{ type: string; content: string; importance: number }>,
   ): Promise<void> {
     try {
-      // 落库前再纠偏一次：resolvedType = infer || llm || default
+      // 仅本批写入纠偏：强信号覆盖，否则保留抽取侧 type（不扫表自愈存量）
       const data = items.map((m) => {
-        const inferred = this.shared.inferMemoryTypeFromContent(m.content)
-        const type = (inferred ||
+        const strong = this.shared.inferStrongMemoryTypeFromContent(m.content)
+        const type = (strong ||
           m.type ||
           'important_fact') as
           | 'preference'
@@ -218,18 +218,6 @@ export class CompanionChatPipelineService {
         }
       })
       await this.memoryRepo.bulkCreate(data)
-
-      // 存量自愈：同 companion 活跃记忆若 type 与内容启发式不一致则写回（覆盖历史误标）
-      const active = await this.memoryRepo.findActiveByCompanion(userId, companionId, 50)
-      for (const mem of active) {
-        const resolved = this.shared.inferMemoryTypeFromContent(mem.content)
-        if (resolved && mem.type !== resolved) {
-          await this.memoryRepo.update(mem.id, { type: resolved })
-          this.logger.log(
-            `[persistMemories] type_repair id=${mem.id} ${mem.type}→${resolved} content=${mem.content.slice(0, 24)}`,
-          )
-        }
-      }
     } catch (err) {
       this.logger.error(`persistMemories failed: ${(err as Error).message}`)
     }

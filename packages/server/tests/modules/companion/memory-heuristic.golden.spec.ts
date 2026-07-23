@@ -142,6 +142,22 @@ describe('UT-MEM-type-infer: 内容推断记忆类型', () => {
     expect(shared.inferMemoryTypeFromContent('我讨厌空话安慰')).toBe('preference')
   })
 
+  it('强信号可覆盖；无强信号返回 null（留给 LLM type）', () => {
+    expect(shared.inferStrongMemoryTypeFromContent('我最近因为加班有点失眠')).toBe(
+      'important_fact',
+    )
+    expect(shared.inferStrongMemoryTypeFromContent('我更喜欢你先复述我的感受，再说别的')).toBe(
+      'preference',
+    )
+    expect(shared.inferStrongMemoryTypeFromContent('别再提我的前任')).toBe('boundary')
+    // 无关键词强信号：不压扁为 important_fact
+    expect(shared.inferStrongMemoryTypeFromContent('我们希望长期一起成长的目标')).toBe(
+      'relationship_goal',
+    )
+    expect(shared.inferStrongMemoryTypeFromContent('下周要去一趟外地')).toBeNull()
+  })
+
+
   it('formatMemoriesForPrompt 带类型标签且纠正误标', () => {
     const text = shared.formatMemoriesForPrompt(
       [

@@ -255,16 +255,13 @@ export class CompanionChatStreamService {
         fullState: {},
         timeout: isAbort,
       })
-      // 设计 A：若 prepareContext 已成功，user 已落库；此处 done 仅给客户端即时文案，不伪造成功助手消息
+      // 失败只发 error：禁止先 done（非空 fallback）再 error——Transport 会把 done 当成功 finish 并丢弃后续 error
+      // 设计 A：若 prepareContext 已成功，user 已落库；此处不伪造成功助手消息
       const fallback = message.includes('State missing')
         ? '抱歉，伴侣对话管线暂不可用（可能未配置 Companion LLM）。请在管理后台检查模块配置后重试。'
         : isAbort
           ? '请求超时或已中断，请重试'
           : message
-      yield {
-        event: 'done',
-        data: { fullReply: fallback, content: fallback, quality: undefined },
-      }
       yield this.errorEvent(code, isAbort ? fallback : message)
     }
   }

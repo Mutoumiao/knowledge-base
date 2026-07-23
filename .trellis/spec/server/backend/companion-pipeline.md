@@ -238,13 +238,15 @@ Policy 的 sentence/question/advice 预算 MUST 写进 prompt 正文，不要只
 
 **症状**：SSE 以空 `fullReply` 的成功 `done` 结束；客户端空气泡或 L1 aborted 空文；观测显示 status=ok。  
 **原因**：generate 空输出 / 超时后仍走成功路径落库。  
-**正确**：非 safety 硬中断时 `assistantReply` 与 partial 皆空 → `ERR_EMPTY_REPLY` + flags.`empty_reply`；Abort → `ERR_LLM_TIMEOUT` + flags.`timeout`；**禁止**空串 `persistAssistantMessage`。
+**正确**：非 safety 硬中断时 `assistantReply` 与 partial 皆空 → `ERR_EMPTY_REPLY` + flags.`empty_reply`；Abort → `ERR_LLM_TIMEOUT` + flags.`timeout`；**禁止**空串 `persistAssistantMessage`。  
+**陷阱**：catch 路径 **禁止**先 `done`（非空 fallback）再 `error`——Web Transport 在 `done` 上 `finishReason: stop` 并关闭，后续 `error` 被丢弃；失败只发 `error`。
 
 ### 记忆 type 误标 preference
 
 **症状**：管理面/注入把「加班失眠」标成 preference；回忆只吸事实。  
 **原因**：LLM type 直写落库，未做内容启发式。  
-**正确**：落库前 `resolvedType = inferMemoryTypeFromContent || llm || default`（`memory-extraction-node.cleanMemoryItems`）。
+**正确**：落库前 `resolvedType = inferStrongMemoryTypeFromContent || llm || default`（`memory-extraction-node.resolveMemoryType`）。无强信号时 **保留 LLM type**，禁止 `inferMemoryTypeFromContent` 默认 `important_fact` 压扁分类。  
+**禁止**：`persistMemories` 热路径扫 active 记忆全量 type 自愈（会覆盖管理面手改、串行 N 次 update）。
 
 ### 其它既有陷阱
 

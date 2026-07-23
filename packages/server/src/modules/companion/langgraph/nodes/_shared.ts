@@ -298,14 +298,20 @@ export class SharedNodeFactory {
   }
 
   /**
-   * 按内容推断记忆类型。多事实 fallback 时避免「记住两件事」整批打成 preference，
-   * 导致偏好/事实在 prompt 中不可区分。
+   * 仅内容强信号时返回 type；无把握返回 null，交由 LLM type / default。
+   * 落库路径应优先本方法，避免「永远 infer 成 important_fact」压扁 LLM 分类。
    */
-  inferMemoryTypeFromContent(
+  inferStrongMemoryTypeFromContent(
     content: string,
-  ): 'preference' | 'boundary' | 'relationship_goal' | 'conversation_style' | 'important_fact' {
+  ):
+    | 'preference'
+    | 'boundary'
+    | 'relationship_goal'
+    | 'conversation_style'
+    | 'important_fact'
+    | null {
     const c = (content ?? '').trim()
-    if (!c) return 'important_fact'
+    if (!c) return null
     if (/边界|别再|不要再|不希望你|禁止|讨厌你(?:这样|那样)?/.test(c)) return 'boundary'
     // 生活事实强信号：加班/失眠/跳槽等优先于弱偏好词，避免整句误标 preference
     const factStrong =
@@ -327,7 +333,17 @@ export class SharedNodeFactory {
     if (/关系|我们.*一直|长期.*目标/.test(c) && /目标|希望|想要/.test(c)) {
       return 'relationship_goal'
     }
-    return 'important_fact'
+    return null
+  }
+
+  /**
+   * 按内容推断记忆类型（含默认 important_fact）。
+   * 注入/展示纠偏可用；落库请优先 `inferStrongMemoryTypeFromContent` + LLM type。
+   */
+  inferMemoryTypeFromContent(
+    content: string,
+  ): 'preference' | 'boundary' | 'relationship_goal' | 'conversation_style' | 'important_fact' {
+    return this.inferStrongMemoryTypeFromContent(content) ?? 'important_fact'
   }
 
   /** 是否「偏好/边界/风格」类（含 type 误标时按内容纠偏） */

@@ -96,15 +96,15 @@ export class MemoryExtractionNode {
   }
 
   /**
-   * resolvedType = infer || llm || default
-   * 事实强信号强制 important_fact（由 inferMemoryTypeFromContent 承担）
+   * resolvedType = strongInfer || llm || default
+   * 仅内容强信号覆盖 LLM；无强信号时保留 LLM/category 映射
    */
   private resolveMemoryType(
     content: string,
     llmType?: MemoryItem['type'] | string | null,
   ): MemoryItem['type'] {
-    const inferred = this.shared.inferMemoryTypeFromContent(content)
-    if (inferred) return inferred
+    const strong = this.shared.inferStrongMemoryTypeFromContent(content)
+    if (strong) return strong
     if (llmType && llmType in CATEGORY_TO_TYPE) {
       return CATEGORY_TO_TYPE[llmType] ?? (llmType as MemoryItem['type'])
     }

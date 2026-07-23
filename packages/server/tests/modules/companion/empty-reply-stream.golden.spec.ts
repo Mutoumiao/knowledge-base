@@ -41,4 +41,15 @@ describe('UT-STREAM-empty: 空完成防护契约', () => {
     expect(streamSrc).toMatch(/timeout:\s*isAbort/)
     expect(streamSrc).toMatch(/empty_reply/)
   })
+
+  it('管线 catch 失败只发 error，不先 yield 非空 done', () => {
+    const catchIdx = streamSrc.indexOf('} catch (err) {')
+    expect(catchIdx).toBeGreaterThan(-1)
+    const catchBlock = streamSrc.slice(catchIdx)
+    // 通用失败路径：errorEvent，且不得在 catch 内 yield done（NOT_FOUND/ARCHIVED 也是 error only）
+    expect(catchBlock).toMatch(/errorEvent/)
+    expect(catchBlock).not.toMatch(/event:\s*['"]done['"]/)
+    expect(catchBlock).toMatch(/禁止先 done/)
+  })
 })
+

@@ -877,7 +877,14 @@ Companion 成功结束一轮对话时，用户 MUST 能获得非空助手正文�
 - **WHEN** 客户端（含产品验收采集）因整体超时或空流失败时
 - **THEN** 系统 SHOULD 区分 idle 静默超时与 overall 上限，避免「管线仍在产出 token 却被总时长误杀」
 - **AND** 产品 Web MUST 向用户展示错误或超时提示；自动静默重放用户消息 MUST NOT 作为默认行为（避免双写语义不清）
+- **AND** 产品 Web SHOULD 对 Companion SSE 应用 idle + overall 超时并以 Abort 结束（默认量级与验收一致：overall 240s / idle 120s）
 - **AND** 验收脚本 MAY 对 aborted/空流自动重试有限次数（工程配套，不改变业务 API 契约）
+
+#### Scenario: 失败路径不得先 done 再 error
+
+- **WHEN** 管线 catch（超时/解析失败等）需要向客户端报告失败时
+- **THEN** 服务端 MUST 发出可识别 `error`（如 `ERR_LLM_TIMEOUT` / `ERR_LLM_PARSE`）
+- **AND** MUST NOT 先推送非空 `done`（fallback 正文）再推送 `error`（客户端会把 `done` 当成功 finish 并丢弃后续 error）
 
 ### Requirement: 记忆 type 落库语义纠偏
 
@@ -886,7 +893,7 @@ Companion 成功结束一轮对话时，用户 MUST 能获得非空助手正文�
 证据来源：
 - `packages/server/src/modules/companion/langgraph/nodes/_shared.ts`（`inferMemoryTypeFromContent`）
 - `packages/server/src/modules/companion/langgraph/nodes/memory-extraction-node.ts`
-- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts`（persist 纠偏与存量自愈）
+- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts`（persist 本批强信号纠偏；禁止热路径全表 type 自愈）
 
 #### Scenario: 事实内容不得误标 preference
 
