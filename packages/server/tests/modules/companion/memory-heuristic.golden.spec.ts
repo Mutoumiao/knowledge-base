@@ -21,6 +21,24 @@ describe('UT-MEM-heuristic: 显式记忆句切分', () => {
     expect(facts.some((f) => /加班|失眠/.test(f))).toBe(true)
   })
 
+  it('L1 知予 ZHI-MEM-W：记住 + 另外 切出偏好与跳槽事实', () => {
+    const facts = shared.heuristicMemoryFacts(
+      '记住：我讨厌空话安慰；另外我最近在准备跳槽，压力很大但还不想跟人细说公司名。',
+    )
+    expect(facts.length).toBeGreaterThanOrEqual(2)
+    expect(facts.some((f) => /空话|安慰/.test(f))).toBe(true)
+    expect(facts.some((f) => /跳槽|压力/.test(f))).toBe(true)
+  })
+
+  it('L1 晴晴「记住哦」仍可切分多要点', () => {
+    const facts = shared.heuristicMemoryFacts(
+      '记住哦：我加班多的时候容易心情差；还有，我更喜欢你先哄我一下，再问我想不想说细节。',
+    )
+    expect(facts.length).toBeGreaterThanOrEqual(2)
+    expect(facts.some((f) => /加班|心情差/.test(f))).toBe(true)
+    expect(facts.some((f) => /先哄|细节/.test(f))).toBe(true)
+  })
+
   it('关键词命中短句整句保留', () => {
     const facts = shared.heuristicMemoryFacts('请记住：我喜欢晚上聊天')
     expect(facts.length).toBeGreaterThanOrEqual(1)
@@ -32,6 +50,49 @@ describe('UT-MEM-heuristic: 显式记忆句切分', () => {
       '你还记得我希望你怎么回应我，以及我最近为什么难受吗？',
     )
     expect(facts).toEqual([])
+  })
+})
+
+describe('UT-MEM-cover: 内容覆盖判定', () => {
+  const shared = Object.create(SharedNodeFactory.prototype) as SharedNodeFactory
+
+  it('同义近似覆盖', () => {
+    const seen = new Set([shared.normalizeMemoryContent('我最近在准备跳槽，压力很大')])
+    expect(shared.isMemoryContentCovered('我最近在准备跳槽，压力很大', seen)).toBe(true)
+    expect(shared.isMemoryContentCovered('用户讨厌空话安慰', seen)).toBe(false)
+  })
+
+  it('软归一：用户/我 主语不同的偏好视为已覆盖', () => {
+    const seen = new Set([shared.normalizeMemoryContent('用户讨厌空话安慰')])
+    expect(shared.isMemoryContentCovered('我讨厌空话安慰', seen)).toBe(true)
+    expect(shared.isMemoryContentCovered('我最近在准备跳槽，压力很大', seen)).toBe(false)
+  })
+})
+
+describe('UT-MEM-pad: LLM 部分漏抽时补齐启发式', () => {
+  const shared = Object.create(SharedNodeFactory.prototype) as SharedNodeFactory
+
+  it('LLM 只抽「用户…」偏好时：近义不占第二槽，missing 含跳槽', () => {
+    const user =
+      '记住：我讨厌空话安慰；另外我最近在准备跳槽，压力很大但还不想跟人细说公司名。'
+    const heuristic = shared.heuristicMemoryFacts(user)
+    expect(heuristic.length).toBeGreaterThanOrEqual(2)
+    // 模拟 LLM 只返回偏好一条（prompt 习惯「用户…」前缀）
+    const llmOnly = ['用户讨厌空话安慰']
+    const seen = new Set(llmOnly.map((c) => shared.normalizeMemoryContent(c)))
+    const missing = heuristic.filter((f) => !shared.isMemoryContentCovered(f, seen))
+    // 偏好近义应被 covered，不应再出现在 missing
+    expect(missing.some((f) => /空话|安慰/.test(f) && !/跳槽|压力/.test(f))).toBe(false)
+    expect(missing.some((f) => /跳槽|压力/.test(f))).toBe(true)
+    // LIMIT=2 模拟：LLM1 + missing[0] 应能容纳跳槽
+    const padSlot = missing[0]
+    expect(padSlot).toMatch(/跳槽|压力/)
+  })
+
+  it('「换另外一份」不因另外误切成双事实', () => {
+    const facts = shared.heuristicMemoryFacts('我想换另外一份更轻松的工作环境。')
+    // 无「记住」关键词时可能 0～1 条；不得硬切成 2 条触发噪声
+    expect(facts.length).toBeLessThanOrEqual(1)
   })
 })
 

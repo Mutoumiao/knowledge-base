@@ -277,6 +277,7 @@ export const agentMemoryExtractionPrompt = ChatPromptTemplate.fromMessages([
       '用户在做回忆探针（你还记得…）时必须返回空数组。',
       'content 必须是完整事实句，禁止问句、禁止以「你还记得」开头、禁止无主语的半截残片。',
       '最多返回 2 条记忆；如果没有值得长期保存的信息，返回空数组。',
+      '用户在一句里用「记住两件事 / 第一…第二… / 另外…」列出多要点时，应尽量各抽一条，不要只留偏好丢掉生活事实（如跳槽压力、加班失眠）。',
       'content 使用第一人称或面向用户的简洁中文事实句，不要超过 80 个汉字。',
       'importance 使用 1 到 5，边界、禁忌、长期偏好、重要事件通常更高。',
       JSON_OUTPUT_RULES,
@@ -285,7 +286,12 @@ export const agentMemoryExtractionPrompt = ChatPromptTemplate.fromMessages([
         memories: [
           {
             type: 'preference',
-            content: '用户更喜欢先被听见感受，再给建议。',
+            content: '用户讨厌空话安慰，更希望被认真听。',
+            importance: 4,
+          },
+          {
+            type: 'important_fact',
+            content: '用户最近在准备跳槽，压力很大。',
             importance: 4,
           },
         ],

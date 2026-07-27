@@ -39,6 +39,8 @@ export class CompanionChatPipelineService {
     conversationId: string
     initialState: Partial<CompanionState>
     ctx: NodeExecutionContext
+    /** prepare 固化；禁止图后用 state.summary 反推 summaryLoaded */
+    prepObs: { summaryLoaded: boolean; recentMessageCount: number }
   }> {
     const companion = await this.companionRepo.findByIdAndAuthorize(
       params.companionId,
@@ -88,6 +90,8 @@ export class CompanionChatPipelineService {
     // 含本轮用户消息的会话累计数，供 relationship 等节点使用（非 recent 窗口长度）
     const afterUser = await this.conversationRepo.incrementMessageCount(conversation.id)
 
+    // F2：String? → ConversationSummary；空/空白不装载
+    const rawSummary = conversation.summary?.trim() ? conversation.summary : null
     const initialState: Partial<CompanionState> = {
       userId: params.userId,
       companionId: params.companionId,
@@ -120,7 +124,18 @@ export class CompanionChatPipelineService {
         rating: f.rating as 'positive' | 'negative',
         reason: f.reason ?? undefined,
       })),
+      ...(rawSummary
+        ? { summary: { text: rawSummary, updatedAt: conversation.updatedAt } }
+        : {}),
     }
+
+    const prepObs = {
+      summaryLoaded: Boolean(rawSummary),
+      recentMessageCount: recentMessages.length,
+    }
+    this.logger.debug(
+      `[prepareContext] conversationId=${conversation.id} summaryLoaded=${prepObs.summaryLoaded} recentCount=${prepObs.recentMessageCount} memoryCount=${initialState.existingMemories?.length ?? 0}`,
+    )
 
     const ctx: NodeExecutionContext = {
       userId: params.userId,
@@ -136,7 +151,7 @@ export class CompanionChatPipelineService {
       signal: new AbortController().signal,
     }
 
-    return { companion, conversationId: conversation.id, initialState, ctx }
+    return { companion, conversationId: conversation.id, initialState, ctx, prepObs }
   }
 
   async *execute(

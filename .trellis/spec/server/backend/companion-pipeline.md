@@ -45,7 +45,7 @@
 
 ### prepareContext 顺序（设计 A）
 
-**顺序不可调乱**：authorize → archived 门闸 → getOrCreate conversation → **并行加载** memories / `findRecent` / feedbacks → **再** `save(user)` → `incrementMessageCount` → 组装 `initialState`。
+**顺序不可调乱**：authorize → archived 门闸 → getOrCreate conversation → **并行加载** memories / `findRecent` / feedbacks → **再** `save(user)` → `incrementMessageCount` → 组装 `initialState`（含 **会话摘要读回**）。
 
 | 字段 | 来源 | 禁止 |
 |------|------|------|
@@ -53,8 +53,16 @@
 | `recentMessages` | 落库 **前** 的最新窗口 | 用 `asc+take` 取「最旧 N 条」 |
 | `messageCount` | 落库 user 后的会话累计 | 用 `recentMessages.length` 冒充（窗口≤18 且不含本轮 user） |
 | `feedbacks` | FeedbackRepository 限额加载 | 写死 `[]` |
+| `summary` | 库字段 `conversation.summary: String?` **显式映射**为 `{ text, updatedAt }` | 把 string 直接赋给 `state.summary`；图结束后用 `state.summary` 反推「是否读回」 |
 
 半会话语义：safety 中断 / 管线失败后允许仅 user 落库；archived 在落库前抛 `ERR_COMPANION_ARCHIVED`，**不得脏写**。
+
+### 三层模型工作记忆（长上下文）
+
+模型每轮上下文 = **近窗原文**（`RECENT_MESSAGE_LIMIT` 默认 18）+ **会话滚动摘要**（`conversation.summary` 读回）+ **长期记忆**（默认 ≤12）。  
+用户可见历史仍是全文落库；**不得**把「可见历史完整」说成「全历史每轮进 LLM」。
+
+generate 节序：`#1 人设` → `#2 长期记忆` → **`#3 会话中线摘要`** → `#4 最近对话` → … → `#11 硬约束`（禁止 `#2.5`）。
 
 ### findRecent：最新 N + 正序
 
@@ -120,12 +128,15 @@ QualityGuard **零 LLM**，在打分之外可对 `assistantReply` 做规则软�
 | `isRecallProbe` | 「你还记得…吗」只读；同句含「记住」写入则不算纯探针 |
 | `sanitizeMemoryFact` / `sanitizeMemoryFacts` | 落库前去噪；问句/残片/空话 → null |
 | `shouldSkipMemoryCandidateFast` | 探针 / 寒暄 / 重复 / 敏感 → 跳过 LLM 抽取 |
-| `heuristicMemoryFacts` | 显式「记住…」切分兜底；探针返回 [] |
+| `heuristicMemoryFacts` | 显式「记住…/记住哦」切分兜底；支持「另外/还有」多要点；探针返回 [] |
+| `isMemoryContentCovered` | 落库/补齐去重（子串近似） |
 | `filterInjectableMemories` | 注入前再滤历史噪声 |
 | `rankMemoriesForPrompt` | **相关度优先**（token/双字滑窗）+ importance；避免无关高 importance 霸榜 |
 | `formatMemoriesForPrompt` | filter → rank → 格式化为 prompt 列表 |
 
 候选与抽取节点：**双保险**都走 sanitize；pipeline `prepareContext` 注入也必须 filter。
+
+**O8 漏抽补齐（2026-07-24）**：`memoryExtractionNode` 在 LLM **空抽或部分条数**时用 `padWithCandidateFacts` 合并 candidate/heuristic 未覆盖事实（上限 `MEMORY_EXTRACTION_LIMIT`）；`isMemoryContentCovered` 含软归一（用户/我 近义）；pad **优先 important_fact**。candidate 仅关键词强制 `shouldExtract`（禁止闲聊「A。另外 B」误强制）。禁止加 repair / 改图拓扑。
 
 历史噪声清理（运维，非热路径）：`packages/server/scripts/cleanup-noisy-memories.mjs`（Prisma 从 `packages/server` 解析）。
 
@@ -148,6 +159,7 @@ Policy 的 sentence/question/advice 预算 MUST 写进 prompt 正文，不要只
 - [ ] Quality 软修复：adviceLimit=0 剥建议句；破沉浸兜底；`assistantReply` 被 patch
 - [ ] Route 分层：emotional_support+sad 在非 trusted 关系仍应倾向 deep_comfort 类，而非默认 clarify
 - [ ] 记忆去噪：`UT-MEM-denoise`（探针不写、sanitize 丢问句、filter/rank）
+- [ ] 记忆漏抽补齐：`UT-MEM-pad` / `UT-MEM-cover`（LLM 部分条数 + 近义不占坑 + 跳槽补齐）
 - [ ] 记忆 await：stream 路径 done 前库中已有本轮 extracted（集成/L1 同会话记忆）
 - [ ] `messageCount`：relationship 使用累计数，非 `recent.length`（`UT-REL-msg-count` / `IT-REL-message-count`）
 - [ ] `findRecent`：最新 N 条正序（`IT-CTX-recent-limit`）
@@ -253,6 +265,27 @@ Policy 的 sentence/question/advice 预算 MUST 写进 prompt 正文，不要只
 **症状**：intent Zod 通过率上升，但 `roleplay` / 新 primary 仍落到粗默认；或删并 primary 后 ROUTE_RULES 残留 `when.intent` 永远不可达。  
 **原因**：route 用 **精确字符串**匹配 `intent.primary`；schema / EXAMPLE / alias / ROUTE_RULES 四源漂移。  
 **正确**：改 enum 面时同步 `ROUTE_RULES` + 单测；第一波优先 enum 值 alias + EXAMPLE 合法列表；未知值不得静默→`unclear`；三态写 `ctx.structuredStages` 再挂 `spanAttrs`。
+
+### summary 写库后 prepare 必须读回（F2）
+
+**症状**：summary 节点每轮写 `conversation.summary`，但超窗后模型仍像「失忆」；relationship / memory_* 的 `{conversationSummary}` 长期「暂无」。  
+**原因**：`prepareContext` 只装 recent/memories/feedbacks，**不**把库摘要映射进 `initialState.summary`；generate 也不消费摘要。  
+**正确**：`if (conversation.summary?.trim()) initialState.summary = { text: conversation.summary, updatedAt: conversation.updatedAt }`；generate 注入 `# 3 会话中线摘要`。  
+**禁止**：只写库不读回；用扩大近窗假装已解决超窗。
+
+### relationship 读的是上轮固化摘要（勿改拓扑）
+
+**症状**：同轮 relationship 的摘要看起来「旧一拍」。  
+**原因**：图序 relationship ≪ summary 节点；本轮 summary 在 generate/quality 之后才写。  
+**正确语义**：relationship / 本轮 generate 读的是 **prepare 载入的上轮固化摘要**，不是本轮新摘要。  
+**禁止**：为「修」此时序去改 11 节点拓扑或把 summary 挪到 relationship 之前（另 change 评估）。
+
+### summaryLoaded 在 prepare 捕获，obs 阶段消费
+
+**症状**：观测上 `summaryLoaded` 几乎总为 true，掩盖「未读回」回归。  
+**原因**：图结束后 `fullState.summary` 常被本轮 summary 节点写满，用其非空反推会假阳性。  
+**正确**：prepare 固化 `prepObs.summaryLoaded / recentMessageCount / summaryChars`，`writeCompanionObs` 只消费该对象。  
+**禁止**：`summaryLoaded = Boolean(fullState.summary?.text)`。
 
 ### 其它既有陷阱
 

@@ -1114,3 +1114,179 @@ Companion L1 半自动验收的自动硬门槛 MUST 服务「人设在场」产�
 - **AND** 报告 MUST 将关键词结果标为辅助；L1 过线以官方四角色人工七维 + 盲测为准
 - **AND** 系统 MAY 以「名称出现 **或** 人设锚点词命中」作为自动辅助条件
 - **AND** 最终 D1 仍以多裁判/人工为准
+
+---
+
+## ADDED Requirements
+
+### Requirement: 模型工作记忆与用户可见历史边界
+
+系统 SHALL 区分 **用户可见历史** 与 **模型每轮工作记忆**，并在产品契约与实现中保持一致。用户可见历史 MUST 以会话消息落库为准并可分页读取；模型工作记忆 MUST 由有限近窗原文、可选会话滚动摘要与有限长期记忆（及既有反馈/人设）组成。系统 MUST NOT 将「可见历史完整」表述为「全历史每轮进入 LLM」。
+
+证据来源（目标）：
+- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts`（prepareContext）
+- `openspec/specs/companion/spec.md`（近期消息窗口、记忆注入）
+- 口径文档（handoff / prod-acceptance README 等）
+
+#### Scenario: 三层工作记忆
+
+- **WHEN** 构建 Companion 单轮 LLM 上下文时
+- **THEN** 模型侧上下文 MUST 可分解为：
+  - 近窗原文：最近至多 `RECENT_MESSAGE_LIMIT`（默认 18）条消息
+  - 会话滚动摘要：来自本会话 `conversation.summary`（若存在且已读回）
+  - 长期记忆：至多 `MEMORY_INJECTION_LIMIT`（默认 12）条可注入记忆
+- **AND** MUST NOT 默认将会话内全部历史消息无上限注入本轮 LLM
+
+#### Scenario: 禁止全史承诺
+
+- **WHEN** 编写或审查对外/剧本口径时
+- **THEN** 文案 MUST NOT 声称「全历史始终进模型」或「记住全部原话」作为已交付能力
+- **AND** SHOULD 使用「近窗 + 滚动摘要 + 长期记忆」三段式说明
+
+---
+
+### Requirement: 会话摘要跨轮读回
+
+系统 SHALL 在每轮 `prepareContext`（或等价上下文组装入口）将当前会话已持久化的 `conversation.summary` 载入 `CompanionState.summary`（若库中存在非空摘要）。系统 MUST NOT 仅写库摘要却在后续轮次丢弃读回，导致滚动压缩跨轮失效。
+
+证据来源（目标）：
+- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts`
+- `packages/server/src/modules/companion/repositories/companion-conversation.repository.ts`
+- `packages/server/src/modules/companion/langgraph/nodes/summary-node.ts`
+
+#### Scenario: 非空摘要进入 initialState
+
+- **WHEN** 会话行存在非空 `summary` 文本且用户发起新一轮聊天
+- **THEN** `prepareContext` 产出的 `initialState.summary.text` MUST 等于（或规范化后等于）库中该摘要文本
+- **AND** 下游在生成新摘要前 MUST 能读取到该文本作为滚动基础
+
+#### Scenario: 无摘要时行为
+
+- **WHEN** 会话尚无摘要或 summary 为空
+- **THEN** 系统 MUST NOT 伪造非空会话摘要注入 state
+- **AND** 依赖 `state.summary` 的节点 MUST 按既有空值路径降级（如「暂无」）
+
+#### Scenario: reset 清空会话摘要
+
+- **WHEN** 用户重置该会话聊天历史时
+- **THEN** 系统 MUST 将会话 `summary` 置空（或等价清除）
+- **AND** MUST NOT 因本能力改变「长期记忆跨 reset 保留」的既有语义
+
+#### Scenario: 摘要长度上限不变
+
+- **WHEN** 生成或持久化会话摘要时
+- **THEN** 文本长度 MUST 遵守既有 `CONVERSATION_SUMMARY_MAX_LENGTH`（默认 1600 字符）约束
+
+---
+
+### Requirement: Generate 消费会话摘要
+
+系统 SHALL 在 `generate` 节点组装最终回复 prompt 时注入本轮 `state.summary` 中的会话中线摘要（若存在）。系统 MUST NOT 仅将摘要提供给 relationship / memory 等侧节点而完全不向用户可见回复路径暴露。
+
+证据来源（目标）：
+- `packages/server/src/modules/companion/langgraph/nodes/generate-node.ts`
+
+#### Scenario: 非空摘要出现在 generate prompt
+
+- **WHEN** `state.summary.text` 非空且 generate 组装 system prompt 时
+- **THEN** 该 prompt MUST 包含可识别的会话摘要段落，且内容覆盖该摘要文本（允许前后缀标签）
+- **AND** 摘要段落 SHOULD 位于长期记忆与最近对话相关上下文附近，便于模型同时使用
+
+#### Scenario: 空摘要占位
+
+- **WHEN** `state.summary` 缺失或文本为空且 generate 组装 prompt 时
+- **THEN** 系统 SHOULD 使用与其他可选节一致的空占位（如「暂无」），MUST NOT 因此中断生成
+
+#### Scenario: 本波不强制扩展的节点
+
+- **WHEN** 执行 intent / emotion / route / policy 节点时
+- **THEN** 本需求 MUST NOT 要求上述节点新增对会话摘要的强制依赖
+- **AND** relationship 与 memory_candidate / memory_extraction 若已声明消费 summary，在读回后 MUST 能收到非空路径数据（实现可不改其接线）
+
+---
+
+### Requirement: 会话摘要与长期记忆职责边界
+
+系统 SHALL 将 **会话滚动摘要** 与 **长期记忆** 视为职责不同的上下文载体：摘要主责本会话中线（进行中话题/近事件弧、关系阶段线索等）；记忆主责稳定可复用信息（偏好、边界、可跨 reset 的重要事实等）。本能力波次 MUST NOT 要求实现摘要与记忆内容的自动工程去重管道。
+
+证据来源（目标）：
+- `packages/server/src/modules/companion/langgraph/nodes/summary-node.ts`
+- `packages/server/src/modules/companion/langgraph/nodes/memory-candidate-node.ts`
+- `packages/server/src/modules/companion/langgraph/nodes/memory-extraction-node.ts`
+- `packages/server/src/modules/companion/langgraph/nodes/generate-node.ts`
+
+#### Scenario: 分责不互相替代
+
+- **WHEN** 产品或 Spec 描述超窗连续性机制时
+- **THEN** 系统 MUST 同时承认近窗、摘要与记忆的分工，MUST NOT 将摘要表述为跨 reset 的唯一长期存储
+- **AND** MUST NOT 将长期记忆表述为完整对话时间线替代品
+
+#### Scenario: 允许短期重叠
+
+- **WHEN** 同一用户事实同时出现在摘要文本与某条记忆 content 中时
+- **THEN** 系统 MAY 在同一轮 prompt 中同时注入两者
+- **AND** MUST NOT 以「出现重叠」单独判定为缺陷而阻塞本能力交付
+
+#### Scenario: 不加重本波记忆抽取
+
+- **WHEN** 实现本会话摘要读回与 generate 注入时
+- **THEN** 系统 MUST NOT 借机强制扩展记忆类型枚举或大幅改写 extraction 门槛作为本需求的前置条件
+
+---
+
+### Requirement: 近窗常量本波保持
+
+在本能力交付范围内，系统 SHALL 保持 `RECENT_MESSAGE_LIMIT` 默认 **18**（按条截断）不变，除非另有独立变更明确修改该常量。会话摘要读回 MUST NOT 被实现为「通过扩大近窗假装已解决超窗失忆」的唯一手段。
+
+证据来源：
+- `packages/server/src/modules/companion/langchain/constants.ts`
+- `packages/server/src/modules/companion/repositories/companion-message.repository.ts`（findRecent）
+
+#### Scenario: 默认近窗仍为 18
+
+- **WHEN** 构建 `state.recentMessages` 时
+- **THEN** 注入条数 MUST NOT 超过 `RECENT_MESSAGE_LIMIT`（默认 18）
+- **AND** 本能力的摘要读回路径 MUST 在该限制下独立生效
+
+---
+
+### Requirement: 长上下文连续性轻量观测
+
+系统 SHALL 提供可诊断信号以判断会话摘要是否在 prepare 阶段被载入，以及近窗规模。观测 MUST 优先复用日志与既有回合 metadata / ObservabilityTurn 字段扩展；MUST NOT 以新建 Admin 专用面板或强制全新 span 体系作为本需求验收前置。
+
+证据来源（目标）：
+- `packages/server/src/modules/companion/companion-chat-pipeline.service.ts`
+- `packages/server/src/modules/companion/companion-chat-stream.service.ts`
+
+#### Scenario: summaryLoaded 可观测
+
+- **WHEN** 完成一轮 prepareContext 且会话存在非空摘要并成功写入 state 时
+- **THEN** 系统 MUST 通过日志和/或既有观测属性暴露 `summaryLoaded=true`（或等价布尔）
+- **AND** SHOULD 暴露 `recentMessageCount`（或等价近窗条数）
+
+#### Scenario: 无摘要时
+
+- **WHEN** 会话无可用摘要时
+- **THEN** `summaryLoaded`（或等价）MUST 为 false 或不写入真值
+- **AND** MUST NOT 将「本轮 summary 节点新生成」与「prepare 读回库摘要」混为同一信号而不加区分（若仅有单一字段，文档 MUST 定义其语义）
+
+---
+
+### Requirement: 超窗要点连续性验收意图
+
+系统 SHALL 支持以自动化单元测试验证摘要读回与 generate 注入路径；并 SHOULD 提供独立于 L1 七维裁判的长聊/超窗场景门禁，验证模型在近窗之外仍能自然接住约定要点。本需求 MUST NOT 将全量 L1 七维重签作为交付前置。
+
+#### Scenario: 单元路径
+
+- **WHEN** 运行 Companion 相关单元/集成测试时
+- **THEN** 测试集 MUST 覆盖：prepare 读回非空 summary；无 summary 不伪造；generate prompt 在非空 summary 下包含摘要内容
+- **AND** reset 清空 summary 的既有或新增回归 MUST 保持通过
+
+#### Scenario: 场景门禁意图
+
+- **WHEN** 执行本 change 的长上下文场景验收时
+- **THEN** 场景 MUST 在同会话内使至少一类「进行中事实/约定」落在近窗之外后仍能被探针轮自然接住
+- **AND** SHOULD 同时覆盖一类稳定偏好（主记忆路径）接住
+- **AND** MUST NOT 要求模型复述更早原句作为唯一通过条件
+- **AND** MUST NOT 强制将该长跑场景绑定为每次 PR 的默认 CI 硬门禁（单元测试除外）
+

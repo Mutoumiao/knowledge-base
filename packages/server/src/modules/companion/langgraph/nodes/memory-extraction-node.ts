@@ -60,18 +60,52 @@ export class MemoryExtractionNode {
     )
     let memories = this.cleanMemoryItems(result.memories).slice(0, MEMORY_EXTRACTION_LIMIT)
 
-    // LLM 空抽时：用候选 facts / 规则从用户句合成，避免「应抽未落库」
-    if (memories.length === 0) {
-      memories = this.fallbackFromCandidate(state)
-      if (memories.length > 0) {
-        this.logger.log(
-          `[memoryExtractionNode] stage=fallback_candidate count=${memories.length}`,
-        )
-      }
+    // LLM 空抽或部分漏抽：用候选/启发式补齐（O8：双要点「偏好+生活事实」只落一条）
+    const beforePad = memories.length
+    memories = this.padWithCandidateFacts(memories, state)
+    if (memories.length > beforePad) {
+      this.logger.log(
+        `[memoryExtractionNode] stage=pad_candidate before=${beforePad} after=${memories.length}`,
+      )
     }
 
     memories = this.dedupeAgainstExisting(memories, state.existingMemories)
     return { extractedMemories: memories.slice(0, MEMORY_EXTRACTION_LIMIT) }
+  }
+
+  /**
+   * 在已有 LLM 结果上补齐未覆盖的 candidate/heuristic 事实，直到 MEMORY_EXTRACTION_LIMIT。
+   * 仅当 candidate.shouldExtract 时启用；优先补 important_fact，避免近义偏好占坑挤掉生活事实。
+   */
+  private padWithCandidateFacts(memories: MemoryItem[], state: CompanionState): MemoryItem[] {
+    if (memories.length >= MEMORY_EXTRACTION_LIMIT) return memories
+    if (!state.memoryCandidate?.shouldExtract) return memories
+
+    const extras = this.fallbackFromCandidate(state)
+    if (extras.length === 0) return memories
+
+    const seen = new Set(memories.map((m) => this.shared.normalizeMemoryContent(m.content)))
+    const uncovered = extras
+      .filter((ex) => !this.shared.isMemoryContentCovered(ex.content, seen))
+      .sort((a, b) => this.padPriority(b) - this.padPriority(a))
+
+    const out = [...memories]
+    for (const ex of uncovered) {
+      if (out.length >= MEMORY_EXTRACTION_LIMIT) break
+      if (this.shared.isMemoryContentCovered(ex.content, seen)) continue
+      out.push(ex)
+      seen.add(this.shared.normalizeMemoryContent(ex.content))
+    }
+    return out
+  }
+
+  /** pad 排序：生活事实强信号优先于偏好/其它，减轻 LIMIT=2 近义占坑 */
+  private padPriority(item: MemoryItem): number {
+    const strong = this.shared.inferStrongMemoryTypeFromContent(item.content)
+    if (strong === 'important_fact' || item.type === 'important_fact') return 3
+    if (strong === 'boundary' || item.type === 'boundary') return 2
+    if (strong === 'preference' || item.type === 'preference') return 1
+    return 0
   }
 
   private cleanMemoryItems(
@@ -157,19 +191,9 @@ export class MemoryExtractionNode {
     )
     const out: MemoryItem[] = []
     for (const item of items) {
+      if (this.shared.isMemoryContentCovered(item.content, seen)) continue
       const key = this.shared.normalizeMemoryContent(item.content)
-      if (!key || seen.has(key)) continue
-      // 子串近似去重：新事实被旧记忆完全包含则跳过
-      let subsumed = false
-      for (const old of seen) {
-        if (old.includes(key) || key.includes(old)) {
-          if (Math.abs(old.length - key.length) <= 8) {
-            subsumed = true
-            break
-          }
-        }
-      }
-      if (subsumed) continue
+      if (!key) continue
       seen.add(key)
       out.push(item)
     }

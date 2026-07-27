@@ -28,19 +28,21 @@
 
 ### O1 残余（不阻塞收口）
 
-- [ ] **live 重采 intent 三态列**：同模型 jsonMode + L1/D12 级剧本，用 `structuredStages.intentNode` 再填一列对照表（可选）
-- [ ] **第二波并值（D3.1）**：仅当 live 对照仍 &lt;30% 且产品预审后；否则保持 alias-only
-
+- [x] **live 重采 intent 三态列**（2026-07-24）：全量 L1 36 轮；`success=31 / coerced=0 / fallback=5`，`fallbackRate=0.139`（D12 历史 ≈0.92）。报告：`docs/report/companion-intent-live-2026-07-24.md`；COMPARE §Live：`openspec/changes/archive/2026-07-24-companion-intent-enum-alignment/COMPARE.md`。一键：`scripts/prod-acceptance/run-companion-intent-live.mjs`
+- [ ] **第二波并值（D3.1）**：**默认不启动**（live 已 ≤50% 且降幅远超 30%；仍 stay-alias-only，须产品预审才开）
+- **下一刀（数据后）**：**O8 记忆抽取**（见下）；不并行再开 intent 大改
 ### 流程旁路（不阻塞质量线）
 
-- [ ] **parity change 归档（C6）**：`openspec/changes/companion-parity-ai-partner-agent` 任务已全勾；确认主 spec 无冲突后 archive
+- [x] **剧本 A + 合并前仪式（Phase C / 2026-07-24）**：`scripts/prod-acceptance/docs/COMPANION-DEMO-SCRIPT-A.md`（晚晚 8 轮 + 边界 + 记忆；PR：vitest 相关 + L0 + 剧本 A）
+- [x] **parity change 归档（C6 / 2026-07-25）**：任务 33/33 全勾；主 spec 已含 Quality 观测型 / 反馈注入 / metadata / companion-care / companion-persona；归档至 `openspec/changes/archive/2026-07-25-companion-parity-ai-partner-agent/`（未再跑 delta sync，主库已对齐）
 
 ### 旁路小单 / 次优先（不进本 change DoD）
 
-- [ ] **记忆抽取质量（O8）**：漏抽（如 NEW-MEM「跳槽压力」）、噪声；**不做** L3
-- [ ] **L1 自动层减噪 v2（O7-续 / O9）**：礼貌软拒词表；BRIDGE 短回复启发式
+- [x] **记忆抽取质量（O8）最小波（2026-07-24）**：LLM 部分漏抽 `padWithCandidateFacts` + 软归一近义去重 + 启发式「记住哦/另外」切分；pad 优先 important_fact；**不做** L3 / 加 repair / 改图。测：`memory-heuristic.golden` / `memory-skip.golden`。残余：live 知予 NEW-MEM 体感复验可选手测
+- [x] **L1 自动层减噪 v2（O7-续 / O9）（2026-07-24）**：`hasSafetyRefusal` 扩礼貌软拒（换个方式/不需要一步/网暴不是/伤到对方等）；`isDegenerateReply({ allowShort })` + bridge/continuity 评估不误杀合理短陪伴；单测 `tests/unit/prod-acceptance-l1-denoise.spec.ts`
 - [ ] **Care 自动投递（C4）**：须单独产品决策；当前 **无** Cron
 - [ ] **同会话记忆管线（C3）**：仅人工证伪「真接不住」后
+- [x] **长对话上下文连续性**：prepare 读回 + generate 注入 + O1 + long-context runner → change `companion-long-context-continuity`（主 spec 已 sync；可选 archive；真聊门禁待 Nest 起）
 - [ ] **emotion / relationship 降 fallback（O2）**：O1 之后或投诉时
 - [ ] L2 / L3 — **默认不做**，须单独 Grill
 

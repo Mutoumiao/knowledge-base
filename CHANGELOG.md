@@ -4,6 +4,27 @@
 
 ---
 
+## [2026-07-27]
+
+### companion / server
+
+- [closed] **companion-long-context-continuity** — prepare 读回 `conversation.summary`→`state.summary`；generate 注入 `#3 会话中线摘要`（节号顺延至 #11）；O1 `prepObs.summaryLoaded/recentMessageCount` 挂 spanAttrs（禁止图后反推）；summary 节点中线分责微调；Trellis 三陷阱 + prod-acceptance 30s 叙事；独立 long-context runner（默认不进 PR CI）。单测 `long-context-summary.spec.ts`。
+
+---
+
+## [2026-07-25]
+
+### companion / docs
+
+- [docs] **Phase C 剧本 A** — `scripts/prod-acceptance/docs/COMPANION-DEMO-SCRIPT-A.md`：晚晚 8 轮 + 边界 + 记忆；PR 合并前仪式（vitest 相关 + L0 + 剧本 A）。
+- [closed] **C6** archive `companion-parity-ai-partner-agent` → `openspec/changes/archive/2026-07-25-companion-parity-ai-partner-agent/`（任务 33/33；主 spec 已对齐，未再 delta sync）。
+
+### companion / server（同波次已合、此前会话）
+
+- [closed] O1 intent live 重采 + 一键脚本；O8 记忆漏抽最小波；O7-续/O9 L1 自动层减噪 v2。见 BACKLOG Post-L1。
+
+---
+
 ## [2026-07-24]
 
 ### companion / server

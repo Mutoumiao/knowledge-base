@@ -31,9 +31,9 @@ const SENSITIVE_MEMORY_REGEX =
 /** 回忆探针：用户在问「你还记得…」，不是写入指令 */
 const RECALL_PROBE_REGEX = /还记得|记得吗|记得不|记不记得|你记得我|有没有记得/
 
-/** 显式写入指令（与「记得」区分） */
+/** 显式写入指令（与「记得」区分；含「记住哦/啦」口语气） */
 const MEMORY_WRITE_REGEX =
-  /(?:请|希望你|帮我)?记住(?:一下|住|两件事|以下|这些)?|(?:请|希望你|帮我)记住/
+  /(?:请|希望你|帮我)?记住(?:一下|住|哦|喔|啦|哈)?(?:两件事|以下|这些)?|(?:请|希望你|帮我)记住/
 
 /** 噪声事实：问句、探针残片、无实质指令尾 */
 const NOISY_FACT_REGEX =
@@ -197,7 +197,7 @@ export class SharedNodeFactory {
 
   /**
    * 从「请记住 / 希望你记住 / 我喜欢…」类用户句启发式切出候选事实。
-   * 供 memory_candidate / memory_extraction 在 LLM 空结果时兜底，保证显式记忆可落库。
+   * 供 memory_candidate / memory_extraction 在 LLM 空结果或部分漏抽时兜底。
    */
   heuristicMemoryFacts(userText: string): string[] {
     const text = (userText ?? '').trim()
@@ -206,18 +206,22 @@ export class SharedNodeFactory {
 
     const facts: string[] = []
 
-    // 「记住…：A；B」或「记住两件事：第一…第二…」
+    // 「记住…：A；B」/「记住哦：…」/「记住两件事：第一…第二…」
     const rememberMatch = text.match(
-      /(?:请|希望你|帮我)?记住(?:一下|住)?(?:两件事|以下|这些)?[：:，,\s]*(.+)$/s,
+      /(?:请|希望你|帮我)?记住(?:一下|住|哦|喔|啦|哈)?(?:两件事|以下|这些)?[：:，,\s]*(.+)$/s,
     )
     const body = rememberMatch?.[1]?.trim() || text
 
+    // 分号/句号/第一第二/以及/还有；「另外/此外」仅在标点或空白后切分，避免「换另外一份」误切
     const chunks = body
-      .split(/(?:[;；。！？\n]|第一[，,、]?|第二[，,、]?|第三[，,、]?|以及|还有)/)
+      .split(
+        /(?:[;；。！？\n]|第一[，,、]?|第二[，,、]?|第三[，,、]?|以及|还有|(?<=[;；，,。！？\s])(?:另外|此外|再者))/,
+      )
       .map((s) =>
         s
-          .replace(/^(?:希望你|请|帮我)?记住(?:一下|住)?/g, '')
+          .replace(/^(?:希望你|请|帮我)?记住(?:一下|住|哦|喔|啦|哈)?/g, '')
           .replace(/^(?:第一|第二|第三)[，,、\s]*/g, '')
+          .replace(/^(?:另外|此外|再者)[，,、\s]*/g, '')
           .replace(/^(?:是|：|:|，|,)\s*/g, '')
           .trim(),
       )
@@ -237,6 +241,42 @@ export class SharedNodeFactory {
     }
 
     return facts.slice(0, 3)
+  }
+
+  /**
+   * 覆盖判定用轻量归一：去掉「用户/我/你」主语与礼貌前缀，便于近义偏好去重。
+   * 例：用户讨厌空话安慰 ≈ 我讨厌空话安慰
+   */
+  softNormalizeMemoryContent(content: string): string {
+    return this.normalizeMemoryContent(content)
+      .replace(/^(用户|我|你)+/g, '')
+      .replace(/^(希望你|请你|请|帮我)+/g, '')
+      .replace(/[的了呢吧啊呀\s]/g, '')
+  }
+
+  /**
+   * 新事实是否已被已有内容覆盖（全等 / 子串近似 / 软归一近义）。
+   */
+  isMemoryContentCovered(content: string, existingNormalized: Iterable<string>): boolean {
+    const key = this.normalizeMemoryContent(content)
+    if (!key) return true
+    const softKey = this.softNormalizeMemoryContent(content)
+    for (const old of existingNormalized) {
+      if (!old) continue
+      if (old === key) return true
+      if (old.includes(key) || key.includes(old)) {
+        if (Math.abs(old.length - key.length) <= 8) return true
+      }
+      // 近义：主语/前缀不同但核心相同（pad 时避免「用户…」占坑挤掉第二事实）
+      const softOld = this.softNormalizeMemoryContent(old)
+      if (softKey && softOld && softKey === softOld) return true
+      if (softKey.length >= 6 && softOld.length >= 6) {
+        if (softOld.includes(softKey) || softKey.includes(softOld)) {
+          if (Math.abs(softOld.length - softKey.length) <= 6) return true
+        }
+      }
+    }
+    return false
   }
 
   /**

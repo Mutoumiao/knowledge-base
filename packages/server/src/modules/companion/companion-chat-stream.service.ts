@@ -52,9 +52,12 @@ export class CompanionChatStreamService {
     beginCompanionTokenBucket()
     /** O11：与 graph 共享同一 structuredStages 引用；catch 也要能挂 spanAttrs */
     let executionCtx: NodeExecutionContext | undefined
+    /** prepare 捕获；禁止图后反推 summaryLoaded */
+    let prepObs: { summaryLoaded: boolean; recentMessageCount: number } | undefined
     try {
-      const { companion, conversationId, initialState, ctx } =
-        await this.pipeline.prepareContext(params)
+      const prepared = await this.pipeline.prepareContext(params)
+      const { companion, conversationId, initialState, ctx } = prepared
+      prepObs = prepared.prepObs
       // preflight.memory_load 近似：prepare 内含 memory 加载
       spanMs['preflight.memory_load'] = Date.now() - prepStarted
 
@@ -144,6 +147,7 @@ export class CompanionChatStreamService {
           fullState: finalState,
           emptyReply: true,
           structuredStages: executionCtx?.structuredStages,
+          prepObs,
         })
         yield this.errorEvent('ERR_EMPTY_REPLY', '助手未生成有效回复，请重试')
         return
@@ -190,6 +194,7 @@ export class CompanionChatStreamService {
         spanMs,
         fullState: finalState,
         structuredStages: executionCtx?.structuredStages,
+        prepObs,
       })
     } catch (err) {
       const message = (err as Error).message || '服务暂时不可用'
@@ -215,6 +220,7 @@ export class CompanionChatStreamService {
         fullState: {},
         timeout: isAbort,
         structuredStages: executionCtx?.structuredStages,
+        prepObs,
       })
       // 失败只发 error：禁止先 done（非空 fallback）再 error——Transport 会把 done 当成功 finish 并丢弃后续 error
       // 设计 A：若 prepareContext 已成功，user 已落库；此处不伪造成功助手消息
@@ -240,6 +246,8 @@ export class CompanionChatStreamService {
     timeout?: boolean
     /** O11：节点级 structured 三态；无则跳过 */
     structuredStages?: Record<string, { outcome: string; reason?: string }>
+    /** prepare 捕获；禁止用 fullState.summary 反推 summaryLoaded */
+    prepObs?: { summaryLoaded: boolean; recentMessageCount: number }
   }): void {
     if (!this.obsTurn) return
     const memCount = input.fullState.existingMemories?.length ?? 0
@@ -258,6 +266,12 @@ export class CompanionChatStreamService {
       quality: quality?.status,
       emptyReply: input.emptyReply || undefined,
       timeout: input.timeout || undefined,
+      ...(input.prepObs
+        ? {
+            summaryLoaded: input.prepObs.summaryLoaded,
+            recentMessageCount: input.prepObs.recentMessageCount,
+          }
+        : {}),
       ...(stages ? { structuredStages: stages } : {}),
       ...(tokens.inputTokens > 0 || tokens.outputTokens > 0
         ? { inputTokens: tokens.inputTokens, outputTokens: tokens.outputTokens }

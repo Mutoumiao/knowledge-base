@@ -89,13 +89,22 @@ export class MemoryCandidateNode {
       ...heuristicFacts,
     ])
 
+    // 仅关键词/信号强制抽取；多要点靠 extraction pad 补齐，禁止「A。另外 B」闲聊误强制
     const finalCandidate: MemoryCandidate = hasKeyword
       ? {
           ...result,
           shouldExtract: true,
           confidence: Math.max(result.confidence, 0.9),
-          candidateFacts: mergedFacts.length > 0 ? mergedFacts : result.candidateFacts,
+          // 显式「记住」句：合并启发式多要点，避免 LLM 只回 1 条候选
+          candidateFacts:
+            mergedFacts.length > 0
+              ? mergedFacts
+              : this.shared.sanitizeMemoryFacts(result.candidateFacts ?? []),
           importance: Math.max(result.importance, 4),
+          reason:
+            heuristicFacts.length >= 2
+              ? `${result.reason || '关键词命中'}；启发式多要点已并入 candidate`
+              : result.reason || '关键词命中强制抽取',
         }
       : {
           ...result,

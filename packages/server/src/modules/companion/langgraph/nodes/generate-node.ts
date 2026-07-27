@@ -84,11 +84,15 @@ export class GenerateNode {
     parts.push(this.shared.formatMemoriesForPrompt(state.existingMemories, state.userMessage))
 
     parts.push('')
-    parts.push('# 3. 最近对话')
+    parts.push('# 3. 会话中线摘要')
+    parts.push(state.summary?.text?.trim() || '（暂无）')
+
+    parts.push('')
+    parts.push('# 4. 最近对话')
     parts.push(this.shared.formatMessagesForPrompt(state.recentMessages))
 
     parts.push('')
-    parts.push('# 4. 本轮安全边界')
+    parts.push('# 5. 本轮安全边界')
     if (state.safety) {
       parts.push(`安全等级: ${state.safety.safetyLevel}`)
       parts.push(`边界动作: ${state.safety.boundaryAction}`)
@@ -98,7 +102,7 @@ export class GenerateNode {
     }
 
     parts.push('')
-    parts.push('# 5. 意图 / 情绪 / 关系判断')
+    parts.push('# 6. 意图 / 情绪 / 关系判断')
     if (state.intent) {
       parts.push(`意图: ${state.intent.primary} (需: ${state.intent.userNeed})`)
       parts.push(`意图指南: ${state.intent.promptGuidance}`)
@@ -116,7 +120,7 @@ export class GenerateNode {
     }
 
     parts.push('')
-    parts.push('# 6. 策略路由')
+    parts.push('# 7. 策略路由')
     if (state.route) {
       parts.push(`路由: ${state.route.route}`)
       parts.push(`响应长度: ${state.route.responseLength}`)
@@ -135,7 +139,7 @@ export class GenerateNode {
     }
 
     parts.push('')
-    parts.push('# 7. 回复策略包')
+    parts.push('# 8. 回复策略包')
     if (state.policy) {
       parts.push(`策略: ${state.policy.policy}`)
       parts.push(`开场动作: ${state.policy.openingMove}`)
@@ -151,7 +155,7 @@ export class GenerateNode {
     }
 
     parts.push('')
-    parts.push('# 8. 历史反馈')
+    parts.push('# 9. 历史反馈')
     if (state.feedbacks && state.feedbacks.length > 0) {
       for (const f of state.feedbacks) {
         parts.push(`- ${f.rating} ${f.reason ?? ''}`)
@@ -161,11 +165,11 @@ export class GenerateNode {
     }
 
     parts.push('')
-    parts.push('# 9. 在场与记忆铁律（必须遵守）')
+    parts.push('# 10. 在场与记忆铁律（必须遵守）')
     parts.push(this.buildPresenceRules(state).join('\n'))
 
     parts.push('')
-    parts.push('# 10. 本轮硬约束（优先于自由发挥）')
+    parts.push('# 11. 本轮硬约束（优先于自由发挥）')
     parts.push(this.buildHardConstraints(state).join('\n'))
 
     return parts.join('\n')
@@ -176,11 +180,12 @@ export class GenerateNode {
       '- 你是有人设的亲密陪伴者，不是通用助手/客服：语气、节奏、开场符合上方人设，禁止无故完整自我介绍（除非用户明确要求介绍）。',
       '- 用户倾诉情绪/压力时：前 1–2 句先镜像对方感受或关键事实，再决定是否给建议；禁止一上来列清单说教。',
       '- 若长期记忆非空：在自然对话中用上相关偏好与事实（改写引用，禁止机械复读整条记忆、禁止复读记忆条目编号）。用户同时问起「回应偏好/希望你怎么…」与生活事实时，两类都要点到，禁止只复述事实漏掉偏好。',
+      '- 若会话中线摘要非空：可自然接住其中进行中的话题/约定/近事件，禁止机械复读整段摘要，禁止编造摘要未写的细节；稳定偏好与跨会话事实以长期记忆为准。',
       '- 用户问「你还记得…」时：优先根据长期记忆与最近对话作答；记得就具体说（多要点逐条自然覆盖），不确定就诚实承认并请对方补充；不要假装写入新记忆。',
       '- 单轮克制：少问连珠炮式问题；建议最多一条，且须用户明确需要或策略允许。',
       '- 安全边界：本轮若拒绝有害内容，用当前人设语气拒绝+关心；仍像同一个人在陪，不要变成纯免责声明机器人。',
       '- 边界后恢复：若上一轮刚拒绝过有害请求，而用户本轮是正常倾诉/闲聊/合法问题，必须恢复正常陪伴，禁止再说「按规则我现在不能」「我没法给你任何步骤」之类笼统拦截。',
-      '- 禁止未卜先知：不得编造用户未明确说过的具体经历、细节或情绪原因；只能使用本轮原文、最近对话与长期记忆中已有内容（例如用户只说「失眠/睡不着」，禁止编造「夜里容易醒」等未出现细节）。',
+      '- 禁止未卜先知：不得编造用户未明确说过的具体经历、细节或情绪原因；只能使用本轮原文、最近对话、会话中线摘要与长期记忆中已有内容（例如用户只说「失眠/睡不着」，禁止编造「夜里容易醒」等未出现细节）。',
       '- 中文口语：用自然中文，避免翻译腔（如「测试边界」「可以被验证的动作」「观测指标」「列步骤」等书面直译）。',
       '- 禁止把同一段话完整说两遍；每轮只输出一份完整回复。',
       state.policy
