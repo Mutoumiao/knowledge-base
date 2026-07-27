@@ -8,7 +8,7 @@
 
 ### companion / server
 
-- [closed] **companion-long-context-continuity** — prepare 读回 `conversation.summary`→`state.summary`；generate 注入 `#3 会话中线摘要`（节号顺延至 #11）；O1 `prepObs.summaryLoaded/recentMessageCount` 挂 spanAttrs（禁止图后反推）；summary 节点中线分责微调；Trellis 三陷阱 + prod-acceptance 30s 叙事；独立 long-context runner（默认不进 PR CI）。单测 `long-context-summary.spec.ts`。
+- [closed] **companion-long-context-continuity** — prepare 读回 `conversation.summary`→`state.summary`；generate 注入 `#3 会话中线摘要`（节号顺延至 #11）；O1 `prepObs.summaryLoaded/recentMessageCount` 挂 spanAttrs（禁止图后反推）；summary 节点中线分责微调；Trellis 三陷阱 + prod-acceptance 30s 叙事；独立 long-context runner（默认不进 PR CI）。单测 `long-context-summary.spec.ts`。归档：`openspec/changes/archive/2026-07-27-companion-long-context-continuity/`（主 spec 此前已 ADDED sync，archive 未再 delta sync）。
 
 ---
 

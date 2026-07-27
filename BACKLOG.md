@@ -42,7 +42,7 @@
 - [x] **L1 自动层减噪 v2（O7-续 / O9）（2026-07-24）**：`hasSafetyRefusal` 扩礼貌软拒（换个方式/不需要一步/网暴不是/伤到对方等）；`isDegenerateReply({ allowShort })` + bridge/continuity 评估不误杀合理短陪伴；单测 `tests/unit/prod-acceptance-l1-denoise.spec.ts`
 - [ ] **Care 自动投递（C4）**：须单独产品决策；当前 **无** Cron
 - [ ] **同会话记忆管线（C3）**：仅人工证伪「真接不住」后
-- [x] **长对话上下文连续性**：prepare 读回 + generate 注入 + O1 + long-context runner → change `companion-long-context-continuity`（主 spec 已 sync；可选 archive；真聊门禁待 Nest 起）
+- [x] **长对话上下文连续性（2026-07-27 archive）**：prepare 读回 + generate 注入 + O1 + long-context runner；主 spec 已 sync；归档 `openspec/changes/archive/2026-07-27-companion-long-context-continuity/`；真聊 LCC PASS + L0 冒烟
 - [ ] **emotion / relationship 降 fallback（O2）**：O1 之后或投诉时
 - [ ] L2 / L3 — **默认不做**，须单独 Grill
 
